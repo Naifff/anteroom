@@ -28,7 +28,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "app.data-dir=build/test-data-auth")
+        properties = { "app.data-dir=build/test-data-auth", "app.challenge.per-ip-limit=10000" })
 class AuthHandshakeInterceptorTest {
 
     private static final Path DATA_DIR = Path.of("build/test-data-auth");

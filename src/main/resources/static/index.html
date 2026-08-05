@@ -140,6 +140,15 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
       <div class="msgline hidden" id="fileMsg"></div>
     </div>
 
+    <h4 id="inviteHead" class="hidden">Пригласить</h4>
+    <p id="inviteWhy" class="hidden">Ссылку передавайте целиком и по каналу, которому доверяете:
+      до погашения она открывает комнату любому, кто её открыл. После — становится бесполезной,
+      даже если её сохранили.</p>
+    <div class="row hidden" id="inviteRow">
+      <button class="act" id="makeInvite">Создать ссылку</button>
+    </div>
+    <textarea class="field hidden" id="inviteLink" rows="3" readonly></textarea>
+
     <h4>У меня уже есть ключ</h4>
     <p>Импорт заменит ключ на этом устройстве. Прежняя личность, если она не выгружена,
       будет потеряна безвозвратно.</p>
@@ -562,11 +571,24 @@ let roomKey = null;
 let epoch = 1;
 let lastSeenId = 0;
 let entered = false;
+let inviteToken = null;
 let socket;
+
+let pendingInvite = null;
 
 function readLink() {
   const raw = location.hash.slice(1);
   if (!raw) return;
+
+  // /join#<токен>.<эфемерный приватный ключ> — приглашение. Фрагмент на сервер не уходит,
+  // поэтому токена нет ни в логах, ни в Referer.
+  if (location.pathname.startsWith('/join')) {
+    const dot = raw.indexOf('.');
+    if (dot < 0) return;
+    inviteToken = raw.slice(0, dot);
+    pendingInvite = sodium.from_base64(raw.slice(dot + 1), B64);
+    return;
+  }
   // Ключ в ссылке необязателен: «#<номер>» — это возврат в свою комнату, ключ к которой
   // сервер отдаст обёрткой под наш X25519. С ключом — приглашение для нового участника.
   const dot = raw.indexOf('.');
@@ -577,7 +599,14 @@ function readLink() {
 }
 
 function writeLink() {
-  location.hash = encodeURIComponent(roomId) + '.' + sodium.to_base64(roomKey, B64);
+  // Только номер комнаты. Ключ в адресной строке больше не нужен — своя обёртка лежит
+  // на сервере, — а лишний секрет в истории браузера и на чужом экране ни к чему.
+  // Форма «#<номер>.<ключ>» ещё читается, но не пишется: делиться комнатой теперь
+  // положено приглашением.
+  const wanted = '#' + encodeURIComponent(roomId);
+  if (location.hash !== wanted) {
+    history.replaceState(null, '', location.pathname + location.search + wanted);
+  }
 }
 
 function seal(plaintext) {
@@ -655,6 +684,59 @@ function ask(frame) {
   socket.send(JSON.stringify(frame));
 }
 
+const B64ORIG = sodium.base64_variants.ORIGINAL;
+
+async function sha256Url(text) {
+  const digest = await crypto.subtle.digest('SHA-256', sodium.from_string(text));
+  return sodium.to_base64(new Uint8Array(digest), B64);
+}
+
+/**
+ * Выпуск приглашения.
+ *
+ * Токен делается здесь и на сервер целиком не уходит: туда едет только SHA-256.
+ * В ссылке — не ключ комнаты, а эфемерный приватный ключ инвайта; сам ключ комнаты
+ * лежит на сервере обёрнутым под эфемерный публичный и исчезает вместе с погашением.
+ * Иначе пересланная ссылка навсегда остаётся ключом от комнаты.
+ */
+$('makeInvite').addEventListener('click', async () => {
+  if (!roomKey) return;
+
+  const token = sodium.to_base64(sodium.randombytes_buf(32), B64);
+  const ephemeral = sodium.crypto_box_keypair();
+
+  ask({
+    op: 'invite', room: roomId, tokenHash: await sha256Url(token),
+    role: 'member', ttl: 86400, uses: 1,
+    wrapped: sodium.to_base64(sodium.crypto_box_seal(roomKey, ephemeral.publicKey), B64ORIG),
+  });
+
+  const link = `${location.origin}/join#${token}.${sodium.to_base64(ephemeral.privateKey, B64)}`;
+  $('inviteLink').classList.remove('hidden');
+  $('inviteLink').value = link;
+  $('inviteLink').select();
+});
+
+/** Погашение: развернуть эфемерным ключом и тут же перешифровать под свой X25519. */
+function onRedeemed(frame) {
+  const secret = pendingInvite;
+  pendingInvite = null;
+
+  const wrapped = sodium.from_base64(frame.wrapped, B64ORIG);
+  roomKey = sodium.crypto_box_seal_open(wrapped, sodium.crypto_scalarmult_base(secret), secret);
+  roomId = frame.room;
+
+  // Своя обёртка под собственный ключ: с этого места инвайт больше не нужен.
+  ask({
+    op: 'wrap', room: roomId, epoch, device: sodium.to_base64(keys.signPublic, B64),
+    wrapped: sodium.to_base64(sodium.crypto_box_seal(roomKey, keys.boxPublic), B64ORIG),
+  });
+
+  history.replaceState(null, '', `/#${encodeURIComponent(roomId)}`);
+  entered = false;
+  ask({ op: 'enter', room: roomId, since: 0 });
+}
+
 /**
  * Раздаёт ключ комнаты тем, у кого обёртки этой эпохи ещё нет.
  *
@@ -683,6 +765,12 @@ function onRoom(frame) {
   }
 
   $('roomTitle').textContent = 'Вылазка';
+  // Показываем выпуск только владельцу и администраторам: показать всем — обещать
+  // действие, которое сервер отклонит.
+  const mayInvite = frame.role === 'owner' || frame.role === 'admin';
+  for (const id of ['inviteHead', 'inviteWhy', 'inviteRow']) {
+    $(id).classList.toggle('hidden', !mayInvite);
+  }
   $('seats').textContent = `${cardName(frame.card)} · ${frame.seatsTaken}/52`;
   if (frame.deckSpent) {
     $('status').textContent = 'колода кончилась — комната больше никого не принимает';
@@ -780,7 +868,7 @@ async function connect() {
   socket = new WebSocket(url);
 
   socket.onopen = () => {
-    $('status').textContent = 'вход по подписи; регистрация открыта до фазы инвайтов — наружу не выставлять';
+    $('status').textContent = 'в комнату — только по приглашению; сервер пока принимает любое устройство';
     $('text').disabled = false;
     $('send').disabled = false;
 
@@ -788,11 +876,15 @@ async function connect() {
     ask({ op: 'hello', box: sodium.to_base64(keys.boxPublic, B64) });
 
     entered = false;
-    if (!roomId) {
+    if (inviteToken) {
+      ask({ op: 'redeem', token: inviteToken });
+      inviteToken = null;
+    } else if (!roomId) {
       roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
       ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
     } else {
-      ask({ op: 'join', room: roomId });
+      ask({ op: 'enter', room: roomId, since: lastSeenId });
+      entered = true;
     }
   };
 
@@ -801,6 +893,7 @@ async function connect() {
     if (frame.op === 'room') onRoom(frame);
     else if (frame.op === 'msg') render(frame);
     else if (frame.op === 'key') onKey(frame);
+    else if (frame.op === 'redeemed') onRedeemed(frame);
     else if (frame.op === 'error') $('status').textContent = frame.reason;
   };
 

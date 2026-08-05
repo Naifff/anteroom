@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Service;
 public class ChallengeService {
 
     public static final Duration TTL = Duration.ofSeconds(60);
+    /** Значения по умолчанию. Настраиваются, потому что нагрузка у всех разная. */
     public static final int PER_IP_LIMIT = 30;
     public static final int MAX_LIVE = 10000;
 
@@ -35,11 +37,17 @@ public class ChallengeService {
 
     private final ServerKeyStore serverKeys;
     private final Clock clock;
+    private final int perIpLimit;
+    private final int maxLive;
     private volatile long windowStartedAt;
 
-    public ChallengeService(ServerKeyStore serverKeys, Clock clock) {
+    public ChallengeService(ServerKeyStore serverKeys, Clock clock,
+                            @Value("${app.challenge.per-ip-limit:" + PER_IP_LIMIT + "}") int perIpLimit,
+                            @Value("${app.challenge.max-live:" + MAX_LIVE + "}") int maxLive) {
         this.serverKeys = serverKeys;
         this.clock = clock;
+        this.perIpLimit = perIpLimit;
+        this.maxLive = maxLive;
         this.windowStartedAt = clock.millis();
     }
 
@@ -49,10 +57,10 @@ public class ChallengeService {
         forgetExpired(now);
         rollWindow(now);
 
-        if (perIp.computeIfAbsent(clientIp, ip -> new AtomicInteger()).incrementAndGet() > PER_IP_LIMIT) {
+        if (perIp.computeIfAbsent(clientIp, ip -> new AtomicInteger()).incrementAndGet() > perIpLimit) {
             return null;
         }
-        if (live.size() >= MAX_LIVE) {
+        if (live.size() >= maxLive) {
             return null;
         }
 

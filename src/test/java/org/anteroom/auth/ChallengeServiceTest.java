@@ -32,7 +32,8 @@ class ChallengeServiceTest {
     void setUp() {
         clock = new MutableClock(Instant.parse("2026-08-05T12:00:00Z"));
         serverKeys = new ServerKeyStore(dataDir);
-        challenges = new ChallengeService(serverKeys, clock);
+        challenges = new ChallengeService(serverKeys, clock,
+                ChallengeService.PER_IP_LIMIT, ChallengeService.MAX_LIVE);
         device = Ed25519Keys.newKeyPair();
     }
 

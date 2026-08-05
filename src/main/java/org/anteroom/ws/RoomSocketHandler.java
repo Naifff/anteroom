@@ -5,6 +5,8 @@ import java.util.Base64;
 import java.util.List;
 
 import org.anteroom.device.DeviceService;
+import org.anteroom.invite.InviteService;
+import org.anteroom.invite.Redemption;
 import org.anteroom.message.MessageService;
 import org.anteroom.message.StoredMessage;
 import org.anteroom.room.DeckSpentException;
@@ -48,15 +50,17 @@ public class RoomSocketHandler extends TextWebSocketHandler {
     private final RoomService rooms;
     private final KeyEpochService epochs;
     private final DeviceService devices;
+    private final InviteService invites;
     private final ObjectMapper json = new ObjectMapper();
 
     public RoomSocketHandler(SessionRegistry registry, MessageService messages, RoomService rooms,
-                             KeyEpochService epochs, DeviceService devices) {
+                             KeyEpochService epochs, DeviceService devices, InviteService invites) {
         this.registry = registry;
         this.messages = messages;
         this.rooms = rooms;
         this.epochs = epochs;
         this.devices = devices;
+        this.invites = invites;
     }
 
     @Override
@@ -75,7 +79,10 @@ public class RoomSocketHandler extends TextWebSocketHandler {
             switch (op) {
                 case "hello" -> devices.rememberEncryptionKey(device, frame.path("box").asText());
                 case "create" -> create(session, device, frame);
-                case "join" -> join(session, device, frame);
+                case "invite" -> invite(session, device, frame);
+                case "redeem" -> redeem(session, device, frame);
+                case "revoke" -> revoke(session, device, frame);
+                case "revoke-issued-by" -> revokeIssuedBy(session, device, frame);
                 case "enter" -> enter(session, device, frame);
                 case "key" -> key(session, device, frame);
                 case "wrap" -> wrap(session, device, frame);
@@ -98,17 +105,56 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         sendRoom(session, device, roomId);
     }
 
-    private void join(WebSocketSession session, String device, JsonNode frame) throws IOException {
-        // Инвайтов до фазы 6 нет, поэтому вход в комнату пока открыт всякому, кто знает
-        // её номер. Наружу не выставлять.
+    /**
+     * Выпуск приглашения.
+     *
+     * <p>Сам токен сюда не приходит: клиент делает его сам и присылает только SHA-256,
+     * а {@code wrapped} — это ключ комнаты под эфемерным публичным ключом инвайта. Сервер
+     * не видит ни токена, ни ключа комнаты.
+     */
+    private void invite(WebSocketSession session, String device, JsonNode frame) throws IOException {
         String roomId = frame.path("room").asText();
-        rooms.join(roomId, device, "member", null);
-        sendRoom(session, device, roomId);
+        requireIssuer(roomId, device);
 
-        // Сидящим — обновлённый состав. Карта это имя участника, и без рассылки они видели бы
-        // у новичка отпечаток вместо карты, пока не переоткроют вкладку. Заодно это сигнал
-        // раздать новичку обёртку ключа: сам он её взять неоткуда.
-        announceRoster(roomId, session);
+        invites.create(roomId, device, frame.path("tokenHash").asText(), frame.path("role").asText("member"),
+                frame.path("ttl").asLong(86400), frame.path("uses").asInt(1),
+                Base64.getDecoder().decode(frame.path("wrapped").asText()));
+
+        ObjectNode answer = json.createObjectNode();
+        answer.put("op", "invited");
+        answer.put("room", roomId);
+        write(session, answer);
+    }
+
+    /** Погашение. Токен приходит целиком: хранить хэш и пускать по хэшу — бессмысленно. */
+    private void redeem(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        Redemption result = invites.redeem(frame.path("token").asText(), device);
+        if (!result.accepted()) {
+            fail(session, result.reason());
+            return;
+        }
+
+        ObjectNode answer = json.createObjectNode();
+        answer.put("op", "redeemed");
+        answer.put("room", result.roomId());
+        answer.put("role", result.role());
+        answer.put("wrapped", Base64.getEncoder().encodeToString(result.wrappedKey()));
+        write(session, answer);
+
+        announceRoster(result.roomId(), session);
+    }
+
+    private void revoke(WebSocketSession session, String device, JsonNode frame) {
+        String roomId = frame.path("room").asText();
+        requireIssuer(roomId, device);
+        invites.revoke(roomId, frame.path("tokenHash").asText());
+    }
+
+    /** Каскадный отзыв — по явной команде, а не автоматом при исключении участника. */
+    private void revokeIssuedBy(WebSocketSession session, String device, JsonNode frame) {
+        String roomId = frame.path("room").asText();
+        requireIssuer(roomId, device);
+        invites.revokeIssuedBy(roomId, frame.path("device").asText());
     }
 
     private void announceRoster(String roomId, WebSocketSession except) {
@@ -194,6 +240,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         answer.put("room", roomId);
         answer.put("epoch", room.keyEpoch());
         answer.put("card", rooms.card(roomId, device));
+        answer.put("role", rooms.role(roomId, device));
         answer.put("seatsTaken", room.seatsTaken());
         answer.put("deckSpent", room.deckSpent());
 
@@ -231,6 +278,17 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         frame.put("op", "error");
         frame.put("reason", reason);
         write(session, frame);
+    }
+
+    /**
+     * Выпускать и отзывать приглашения могут только владелец и администраторы. В переписке
+     * роль не видна — она нужна ровно в момент такого действия.
+     */
+    private void requireIssuer(String roomId, String device) {
+        String role = rooms.role(roomId, device);
+        if (!"owner".equals(role) && !"admin".equals(role)) {
+            throw new IllegalArgumentException("нет доступа к комнате");
+        }
     }
 
     private void requireMember(String roomId, String device) {

@@ -34,7 +34,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = "app.data-dir=build/test-data-protocol")
+        properties = { "app.data-dir=build/test-data-protocol", "app.challenge.per-ip-limit=10000" })
 class RoomProtocolTest {
 
     private static final Path DATA_DIR = Path.of("build/test-data-protocol");
@@ -75,6 +75,9 @@ class RoomProtocolTest {
             assertThat(room.get("room").asText()).isNotBlank();
             assertThat(room.get("epoch").asInt()).isEqualTo(1);
             assertThat(room.get("card").asInt()).isBetween(0, 51);
+            // Своя роль нужна интерфейсу: приглашать может не всякий, и кнопку выпуска
+            // показывать всем — обещать действие, которое сервер отклонит.
+            assertThat(room.get("role").asText()).isEqualTo("owner");
         }
     }
 
@@ -83,7 +86,7 @@ class RoomProtocolTest {
         try (Client owner = new Client(); Client guest = new Client()) {
             String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
                     .get("room").asText();
-            guest.request("{\"op\":\"join\",\"room\":\"" + roomId + "\"}");
+            inviteAndRedeem(owner, roomId, "для-гостя", guest);
 
             owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
             guest.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
@@ -167,7 +170,7 @@ class RoomProtocolTest {
         try (Client owner = new Client(); Client guest = new Client()) {
             String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
                     .get("room").asText();
-            guest.request("{\"op\":\"join\",\"room\":\"" + roomId + "\"}");
+            inviteAndRedeem(owner, roomId, "для-обёртки", guest);
 
             JsonNode room = owner.request("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
 
@@ -192,6 +195,116 @@ class RoomProtocolTest {
         }
     }
 
+    /** Выпустить приглашение и провести по нему гостя: теперь только так. */
+    private void inviteAndRedeem(Client host, String roomId, String token, Client guest) throws Exception {
+        host.send("{\"op\":\"invite\",\"room\":\"" + roomId + "\",\"tokenHash\":\"" + hashOf(token)
+                + "\",\"role\":\"member\",\"ttl\":3600,\"uses\":1,\"wrapped\":\"AQID\"}");
+        host.drain();
+        assertThat(guest.request("{\"op\":\"redeem\",\"token\":\"" + token + "\"}").get("op").asText())
+                .isEqualTo("redeemed");
+    }
+
+    private static String hashOf(String token) throws Exception {
+        return ENCODER.encodeToString(
+                java.security.MessageDigest.getInstance("SHA-256").digest(token.getBytes()));
+    }
+
+    @Test
+    void noLongerLetsAnyoneInByRoomNumber() throws Exception {
+        // Вход по номеру комнаты закрыт: попасть внутрь можно только по приглашению.
+        try (Client owner = new Client(); Client stranger = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+
+            JsonNode answer = stranger.request("{\"op\":\"join\",\"room\":\"" + roomId + "\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+            assertThat(stranger.request("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}")
+                    .get("op").asText()).isEqualTo("error");
+        }
+    }
+
+    @Test
+    void letsNewcomerInByInvite() throws Exception {
+        try (Client owner = new Client(); Client newcomer = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"invite\",\"room\":\"" + roomId + "\",\"tokenHash\":\"" + hashOf("пригласительный")
+                    + "\",\"role\":\"member\",\"ttl\":3600,\"uses\":1,\"wrapped\":\"AQID\"}");
+            owner.drain();
+
+            JsonNode answer = newcomer.request("{\"op\":\"redeem\",\"token\":\"пригласительный\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("redeemed");
+            assertThat(answer.get("room").asText()).isEqualTo(roomId);
+            assertThat(answer.get("wrapped").asText()).isEqualTo("AQID");
+        }
+    }
+
+    @Test
+    void refusesSpentInviteWithoutSayingWhy() throws Exception {
+        try (Client owner = new Client(); Client first = new Client(); Client second = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"invite\",\"room\":\"" + roomId + "\",\"tokenHash\":\"" + hashOf("одноразовый")
+                    + "\",\"role\":\"member\",\"ttl\":3600,\"uses\":1,\"wrapped\":\"AQID\"}");
+            owner.drain();
+            // Сначала убеждаемся, что рабочий путь есть: иначе тест зелен и когда
+            // погашения не существует вовсе.
+            assertThat(first.request("{\"op\":\"redeem\",\"token\":\"одноразовый\"}").get("op").asText())
+                    .isEqualTo("redeemed");
+
+            JsonNode spent = second.request("{\"op\":\"redeem\",\"token\":\"одноразовый\"}");
+            JsonNode never = second.request("{\"op\":\"redeem\",\"token\":\"такого-не-было\"}");
+
+            // Ответы обязаны совпасть дословно: по разнице видно, какой инвайт существовал.
+            assertThat(spent.get("op").asText()).isEqualTo("error");
+            assertThat(spent.get("reason").asText()).isEqualTo(never.get("reason").asText());
+        }
+    }
+
+    @Test
+    void letsOnlyOwnerAndAdminIssueInvites() throws Exception {
+        try (Client owner = new Client(); Client member = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"invite\",\"room\":\"" + roomId + "\",\"tokenHash\":\"" + hashOf("для-участника")
+                    + "\",\"role\":\"member\",\"ttl\":3600,\"uses\":1,\"wrapped\":\"AQID\"}");
+            owner.drain();
+            assertThat(member.request("{\"op\":\"redeem\",\"token\":\"для-участника\"}").get("op").asText())
+                    .isEqualTo("redeemed");
+
+            JsonNode answer = member.request("{\"op\":\"invite\",\"room\":\"" + roomId + "\",\"tokenHash\":\""
+                    + hashOf("самозваный") + "\",\"role\":\"member\",\"ttl\":3600,\"uses\":1,\"wrapped\":\"AQID\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+        }
+    }
+
+    @Test
+    void revokesInviteOnOwnerCommand() throws Exception {
+        try (Client owner = new Client(); Client late = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            String hash = hashOf("отзываемый");
+            owner.send("{\"op\":\"invite\",\"room\":\"" + roomId + "\",\"tokenHash\":\"" + hash
+                    + "\",\"role\":\"member\",\"ttl\":3600,\"uses\":5,\"wrapped\":\"AQID\"}");
+            owner.drain();
+
+            // До отзыва ссылка работает — иначе тест ничего не проверяет.
+            try (Client early = new Client()) {
+                assertThat(early.request("{\"op\":\"redeem\",\"token\":\"отзываемый\"}").get("op").asText())
+                        .isEqualTo("redeemed");
+            }
+
+            owner.send("{\"op\":\"revoke\",\"room\":\"" + roomId + "\",\"tokenHash\":\"" + hash + "\"}");
+            owner.drain();
+
+            assertThat(late.request("{\"op\":\"redeem\",\"token\":\"отзываемый\"}").get("op").asText())
+                    .isEqualTo("error");
+        }
+    }
+
     @Test
     void tellsRoomAboutNewcomer() throws Exception {
         // Карта — это имя участника в комнате. Без рассылки состава сидящие видят у новичка
@@ -202,7 +315,7 @@ class RoomProtocolTest {
             owner.request("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
             owner.drain();
 
-            guest.send("{\"op\":\"join\",\"room\":\"" + roomId + "\"}");
+            inviteAndRedeem(owner, roomId, "новичку", guest);
 
             JsonNode roster = owner.awaitOp("room");
             assertThat(roster.get("seatsTaken").asInt()).isEqualTo(2);
