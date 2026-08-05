@@ -2,139 +2,400 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Фрагмент URL Referer и так не переносит, но и путь наружу отдавать незачем. -->
 <meta name="referrer" content="no-referrer">
-<title>Вылазка — скелет</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Вылазка</title>
 <style>
-  body { font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.1rem; font-weight: 600; }
-  #status { color: #6b7280; font-size: .85rem; }
-  #feed { margin: 1rem 0; min-height: 12rem; }
-  .msg { padding: .35rem 0; border-bottom: 1px solid #f0f0f0; }
-  .who { color: #6b7280; font-size: .8rem; font-family: ui-monospace, monospace; }
-  .bad { color: #7f1d1d; }
-  form { display: flex; gap: .5rem; }
-  input { flex: 1; padding: .5rem; font: inherit; }
-  button { padding: .5rem 1rem; font: inherit; }
-  footer { margin-top: 2rem; color: #6b7280; font-size: .8rem; }
-  code { font-family: ui-monospace, monospace; word-break: break-all; }
+:root{
+  --bg:#191817; --surface:#211F1E; --surface-hi:#2B2827;
+  --ink:#E8E4DF; --ink-2:#8C8681; --ink-3:#5A5451; --ember:#D9542F;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;
+  line-height:1.45;-webkit-font-smoothing:antialiased;display:flex;justify-content:center}
+.app{width:100%;max-width:560px;height:100dvh;display:flex;flex-direction:column;position:relative;overflow:hidden}
+
+.top{display:flex;align-items:center;gap:8px;padding:14px 16px 10px}
+.room{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-right:auto}
+.me-chip{display:flex;align-items:center;gap:7px;border:0;cursor:pointer;background:var(--surface);
+  padding:6px 11px;border-radius:999px;font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.me-chip b{color:var(--ink);font-weight:600}
+.me-chip:focus-visible,.reveal:focus-visible,button:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
+
+.feed{flex:1;overflow-y:auto;padding:6px 16px 8px;display:flex;flex-direction:column;gap:2px;scrollbar-width:none}
+.feed::-webkit-scrollbar{display:none}
+.msg{padding-top:12px}
+.who{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-bottom:3px}
+.bubble{background:var(--surface);border-radius:16px;padding:9px 13px;font-size:15.5px;
+  word-wrap:break-word;display:inline-block;max-width:83%}
+.bubble.bad{color:var(--ink-3);font-family:var(--mono);font-size:12.5px}
+
+.composer{margin:6px 12px calc(12px + env(safe-area-inset-bottom));background:var(--surface);
+  border-radius:24px;padding:7px 7px 7px 14px;display:flex;align-items:center;gap:8px}
+.composer input{flex:1;background:none;border:0;outline:none;color:var(--ink);font-family:var(--sans);
+  font-size:16px;padding:8px 0;min-width:0}
+.composer input::placeholder{color:var(--ink-3)}
+.icon{width:36px;height:36px;flex:0 0 36px;border:0;border-radius:50%;cursor:pointer;
+  background:var(--ink);color:var(--bg);display:grid;place-items:center;font-size:15px}
+.icon:disabled{background:var(--surface-hi);color:var(--ink-3);cursor:default}
+.note{text-align:center;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);padding:0 20px 10px;line-height:1.5}
+
+.backdrop{position:absolute;inset:0;z-index:8;background:rgba(15,14,13,.62);
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.sheet{position:absolute;left:12px;right:12px;bottom:12px;z-index:9;background:var(--surface);
+  border-radius:22px;padding:18px 18px 16px;max-height:88dvh;overflow-y:auto}
+.sheet .t1{font-size:17px;font-weight:600;letter-spacing:-.01em}
+.sheet .fp{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);margin-top:6px;word-break:break-all;line-height:1.6}
+.sheet h4{margin:18px 0 8px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.sheet p{margin:8px 0 0;font-size:12.5px;color:var(--ink-3);line-height:1.4}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.act{border:0;cursor:pointer;background:var(--surface-hi);color:var(--ink);font-family:var(--sans);
+  font-size:13.5px;padding:9px 14px;border-radius:11px}
+.act:disabled{color:var(--ink-3);cursor:default}
+.act.danger{background:var(--ember);color:#fff;font-weight:600}
+.words{font-family:var(--mono);font-size:13.5px;line-height:1.75;margin-top:10px;
+  background:var(--bg);border-radius:12px;padding:12px 14px}
+.words.masked{filter:blur(6px);opacity:.5;user-select:none}
+.words ol{margin:0;padding-left:2.2em;columns:2;column-gap:18px}
+.words li{padding-right:6px}
+.countdown{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:8px}
+.field{display:block;width:100%;margin-top:10px;background:var(--bg);border:0;border-radius:11px;
+  color:var(--ink);font-family:var(--mono);font-size:13.5px;padding:11px 13px;outline:none;resize:vertical}
+.field::placeholder{color:var(--ink-3)}
+.msgline{margin-top:10px;font-size:12.5px;color:var(--ink-2);line-height:1.4}
+.msgline.bad{color:var(--ember)}
+.hidden{display:none}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 
-<h1>Вылазка — скелет комнаты</h1>
-<p id="status">Загрузка…</p>
+<div class="app">
+  <div class="top">
+    <div class="room">Вылазка</div>
+    <button class="me-chip" id="meChip" aria-haspopup="dialog">ключ <b id="meFp">…</b></button>
+  </div>
 
-<div id="feed"></div>
+  <div class="feed" id="feed"></div>
 
-<form id="composer">
-  <input id="text" placeholder="Сообщение" autocomplete="off" disabled>
-  <button disabled>Отправить</button>
-</form>
+  <form class="composer" id="composer">
+    <input id="text" placeholder="Сообщение" autocomplete="off" disabled>
+    <button class="icon" id="send" aria-label="Отправить" disabled>↑</button>
+  </form>
+  <div class="note" id="status">загрузка…</div>
 
-<footer>
-  Сообщение живёт минуту. Аутентификации ещё нет — наружу не выставлять.
-  Вторую вкладку открывать <b>этой же ссылкой целиком</b>, вместе с частью после <code>#</code>:
-  без неё ключа нет и лента будет нечитаемой.
-</footer>
+  <div class="backdrop hidden" id="backdrop"></div>
+  <div class="sheet hidden" id="sheet" role="dialog" aria-modal="true" aria-label="Ваш ключ">
+    <div class="t1">Ваш ключ</div>
+    <div class="fp" id="fingerprint"></div>
+    <p id="iosHint" class="hidden">
+      Safari на iOS чистит данные сайта примерно через неделю без визита, и ключ пропадёт.
+      Добавьте страницу на домашний экран — на установленные так сайты это не действует.
+    </p>
+
+    <h4>Экспорт</h4>
+    <p>Сделайте это сейчас. Без экспорта потеря браузера — потеря доступа ко всем комнатам:
+      сервер не хранит ни ключа, ни способа его вывести.</p>
+
+    <div class="row">
+      <button class="act" id="showWords">Показать 24 слова</button>
+      <button class="act" id="saveFile">Скачать key.enc</button>
+    </div>
+
+    <div id="wordsPanel" class="hidden">
+      <div class="words masked" id="wordsBox"><ol id="wordsList"></ol></div>
+      <div class="countdown" id="countdown"></div>
+      <p>Перепишите на бумагу по порядку. Не фотографируйте: снимок уедет в облако.</p>
+    </div>
+
+    <div id="filePanel" class="hidden">
+      <input class="field" id="passphrase" type="password" placeholder="Парольная фраза" autocomplete="new-password">
+      <div class="row">
+        <button class="act" id="doSaveFile">Зашифровать и скачать</button>
+      </div>
+      <p>Файл без фразы бесполезен, фраза без файла — тоже. Шифрование Argon2id занимает
+        секунду-другую и требует памяти.</p>
+      <div class="msgline hidden" id="fileMsg"></div>
+    </div>
+
+    <h4>У меня уже есть ключ</h4>
+    <p>Импорт заменит ключ на этом устройстве. Прежняя личность, если она не выгружена,
+      будет потеряна безвозвратно.</p>
+    <textarea class="field" id="importWords" rows="3" placeholder="24 слова через пробел"></textarea>
+    <input class="field" id="importFile" type="file" accept=".enc">
+    <input class="field" id="importPass" type="password" placeholder="Фраза от файла" autocomplete="off">
+    <div class="row">
+      <button class="act danger" id="doImport">Заменить ключ</button>
+      <button class="act" id="closeSheet">Закрыть</button>
+    </div>
+    <div class="msgline hidden" id="importMsg"></div>
+  </div>
+</div>
 
 <script src="/vendor/libsodium-sumo.js"></script>
 <script src="/vendor/libsodium-wrappers-sumo.js"></script>
-<script>
-(async () => {
-  await sodium.ready;
+<script type="module">
+import { newSeed, keysFromSeed, saveSeed, loadSeed } from '/js/identity.js';
+import { seedToWords, wordsToSeed } from '/js/words.js';
+import { encryptSeed, decryptSeed } from '/js/keyfile.js';
 
-  const B64 = sodium.base64_variants.URLSAFE_NO_PADDING;
-  const status = document.getElementById('status');
-  const feed = document.getElementById('feed');
-  const text = document.getElementById('text');
-  const composer = document.getElementById('composer');
+await sodium.ready;
 
-  // Ключ комнаты живёт во фрагменте и на сервер не уходит: фрагмент не попадает ни в
-  // запрос, ни в логи, ни в Referer. Перекладывать его в query или путь — баг, а не удобство.
-  let roomKey;
-  if (location.hash.length > 1) {
-    roomKey = sodium.from_base64(location.hash.slice(1), B64);
-  } else {
-    roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
-    location.hash = sodium.to_base64(roomKey, B64);
+const $ = (id) => document.getElementById(id);
+const B64 = sodium.base64_variants.URLSAFE_NO_PADDING;
+
+/* ---------- личность ---------- */
+
+let seed = await loadSeed();
+if (!seed) {
+  seed = newSeed();
+  await saveSeed(seed);
+}
+let keys = keysFromSeed(seed);
+
+function showIdentity() {
+  const hex = sodium.to_hex(keys.signPublic);
+  $('meFp').textContent = hex.slice(0, 8);
+  $('fingerprint').textContent = hex.match(/.{1,4}/g).join(' ');
+}
+showIdentity();
+
+// Safari на iOS чистит хранилище примерно через неделю простоя, и личность исчезает сама.
+// Установленным на домашний экран сайтам это не грозит, поэтому предупреждаем заранее.
+const isIos = /iP(hone|ad|od)/.test(navigator.userAgent);
+if (isIos && !navigator.standalone) {
+  $('iosHint').classList.remove('hidden');
+}
+
+/* ---------- шторка ---------- */
+
+function openSheet() {
+  $('sheet').classList.remove('hidden');
+  $('backdrop').classList.remove('hidden');
+}
+
+function closeSheet() {
+  hideWords();
+  $('sheet').classList.add('hidden');
+  $('backdrop').classList.add('hidden');
+  $('wordsPanel').classList.add('hidden');
+  $('filePanel').classList.add('hidden');
+  $('passphrase').value = '';
+  $('importPass').value = '';
+  $('importWords').value = '';
+  // Файл сбрасывается тоже: иначе он останется выбранным, и следующее нажатие
+  // «Заменить ключ» с пустыми словами молча вернёт прежнюю личность.
+  $('importFile').value = '';
+  $('importMsg').classList.add('hidden');
+  $('fileMsg').classList.add('hidden');
+}
+
+$('meChip').addEventListener('click', openSheet);
+$('closeSheet').addEventListener('click', closeSheet);
+$('backdrop').addEventListener('click', closeSheet);
+
+/* ---------- слова ---------- */
+
+let hideTimer = null;
+let tick = null;
+
+function hideWords() {
+  clearTimeout(hideTimer);
+  clearInterval(tick);
+  $('wordsBox').classList.add('masked');
+  $('countdown').textContent = '';
+  $('showWords').textContent = 'Показать 24 слова';
+  // Слова из DOM убираются, а не просто размываются: размытие это картинка,
+  // а не защита, и в дереве страницы они остались бы текстом.
+  $('wordsList').replaceChildren();
+}
+
+function revealWords() {
+  const words = seedToWords(seed);
+  $('wordsList').replaceChildren(...words.map((word) => {
+    const item = document.createElement('li');
+    item.textContent = word;
+    return item;
+  }));
+
+  $('wordsPanel').classList.remove('hidden');
+  $('wordsBox').classList.remove('masked');
+  $('showWords').textContent = 'Спрятать';
+
+  let left = 15;
+  $('countdown').textContent = `спрячется через ${left} с`;
+  tick = setInterval(() => {
+    left -= 1;
+    $('countdown').textContent = `спрячется через ${left} с`;
+  }, 1000);
+  hideTimer = setTimeout(hideWords, 15000);
+}
+
+$('showWords').addEventListener('click', () => {
+  const shown = !$('wordsBox').classList.contains('masked') && $('wordsList').children.length > 0;
+  shown ? hideWords() : revealWords();
+});
+
+/* ---------- key.enc ---------- */
+
+$('saveFile').addEventListener('click', () => {
+  $('filePanel').classList.toggle('hidden');
+  $('passphrase').focus();
+});
+
+$('doSaveFile').addEventListener('click', async () => {
+  const passphrase = $('passphrase').value;
+  const message = $('fileMsg');
+  message.classList.remove('hidden', 'bad');
+
+  if (passphrase.length < 8) {
+    message.classList.add('bad');
+    message.textContent = 'фраза короче восьми знаков не защищает файл';
+    return;
   }
 
-  const NONCE = sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+  $('doSaveFile').disabled = true;
+  message.textContent = 'шифрую…';
+  try {
+    // Уступаем кадр, иначе Argon2id съест поток и «шифрую…» никто не увидит.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const file = await encryptSeed(seed, passphrase);
 
-  function seal(plaintext) {
-    const nonce = sodium.randombytes_buf(NONCE);
-    const box = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
-      sodium.from_string(plaintext), null, null, nonce, roomKey);
-    const packed = new Uint8Array(nonce.length + box.length);
-    packed.set(nonce);
-    packed.set(box, nonce.length);
-    return sodium.to_base64(packed, sodium.base64_variants.ORIGINAL);
+    const url = URL.createObjectURL(new Blob([file], { type: 'application/octet-stream' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'key.enc';
+    link.click();
+    URL.revokeObjectURL(url);
+
+    message.textContent = 'файл скачан';
+    $('passphrase').value = '';
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = `не зашифровалось: ${e.message}`;
+  } finally {
+    $('doSaveFile').disabled = false;
   }
+});
 
-  function open(payload) {
-    const packed = sodium.from_base64(payload, sodium.base64_variants.ORIGINAL);
-    return sodium.to_string(sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
-      null, packed.slice(NONCE), null, packed.slice(0, NONCE), roomKey));
-  }
+/* ---------- импорт ---------- */
 
-  // Догрузка идёт от последнего увиденного id, поэтому реконнект не задваивает ленту
-  // и не требует перерисовки всего.
-  let lastSeenId = 0;
-  let socket;
+$('doImport').addEventListener('click', async () => {
+  const message = $('importMsg');
+  message.classList.remove('hidden', 'bad');
+  message.textContent = 'проверяю…';
 
-  function render(frame) {
-    lastSeenId = Math.max(lastSeenId, frame.id);
+  try {
+    const typed = $('importWords').value.trim();
+    const picked = $('importFile').files[0];
+    let restored;
 
-    const row = document.createElement('div');
-    row.className = 'msg';
-    const who = document.createElement('div');
-    who.className = 'who';
-    who.textContent = frame.sender.slice(0, 8);
-    const body = document.createElement('div');
-    try {
-      body.textContent = open(frame.ciphertext);
-    } catch (e) {
-      // Ровно то, что видит участник без ключа — и то, что видит сервер всегда.
-      body.className = 'bad';
-      body.textContent = 'не расшифровывается: ключ от другой комнаты';
+    if (typed) {
+      restored = wordsToSeed(typed.split(/\s+/));
+    } else if (picked) {
+      restored = await decryptSeed(new Uint8Array(await picked.arrayBuffer()), $('importPass').value);
+    } else {
+      throw new Error('нечего импортировать: введите слова или выберите файл');
     }
-    row.append(who, body);
-    feed.append(row);
+
+    await saveSeed(restored);
+    seed = restored;
+    keys = keysFromSeed(seed);
+    showIdentity();
+
+    message.textContent = 'ключ заменён';
+    closeSheet();
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = e.message;
   }
+});
 
-  function connect() {
-    socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+/* ---------- лента скелета ---------- */
 
-    socket.onopen = () => {
-      status.textContent = 'на связи';
-      text.disabled = false;
-      composer.querySelector('button').disabled = false;
-      socket.send(JSON.stringify({ since: lastSeenId }));
-    };
+let roomKey;
+if (location.hash.length > 1) {
+  roomKey = sodium.from_base64(location.hash.slice(1), B64);
+} else {
+  roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
+  location.hash = sodium.to_base64(roomKey, B64);
+}
 
-    socket.onmessage = (event) => render(JSON.parse(event.data));
+const NONCE = sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
 
-    socket.onclose = () => {
-      status.textContent = 'связь потеряна, переподключаюсь…';
-      text.disabled = true;
-      composer.querySelector('button').disabled = true;
-      setTimeout(connect, 1000);
-    };
+function seal(plaintext) {
+  const nonce = sodium.randombytes_buf(NONCE);
+  const box = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+    sodium.from_string(plaintext), null, null, nonce, roomKey);
+  const packed = new Uint8Array(nonce.length + box.length);
+  packed.set(nonce);
+  packed.set(box, nonce.length);
+  return sodium.to_base64(packed, sodium.base64_variants.ORIGINAL);
+}
+
+function open(payload) {
+  const packed = sodium.from_base64(payload, sodium.base64_variants.ORIGINAL);
+  return sodium.to_string(sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+    null, packed.slice(NONCE), null, packed.slice(0, NONCE), roomKey));
+}
+
+let lastSeenId = 0;
+let socket;
+
+function render(frame) {
+  lastSeenId = Math.max(lastSeenId, frame.id);
+
+  const row = document.createElement('div');
+  row.className = 'msg';
+  const who = document.createElement('div');
+  who.className = 'who';
+  who.textContent = frame.sender.slice(0, 8);
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  try {
+    bubble.textContent = open(frame.ciphertext);
+  } catch {
+    bubble.classList.add('bad');
+    bubble.textContent = 'не расшифровывается: ключ от другой комнаты';
   }
+  row.append(who, bubble);
+  $('feed').append(row);
+  $('feed').scrollTop = $('feed').scrollHeight;
+}
 
-  composer.addEventListener('submit', (event) => {
-    event.preventDefault();
-    if (!text.value) return;
-    // Своё сообщение рисуется по ответу сервера, а не сразу: id приходит оттуда,
-    // и без него догрузка после реконнекта показала бы его второй раз.
-    socket.send(JSON.stringify({ ciphertext: seal(text.value) }));
-    text.value = '';
-  });
+function connect() {
+  socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
 
-  connect();
-})();
+  socket.onopen = () => {
+    $('status').textContent = 'аутентификации ещё нет — наружу не выставлять';
+    $('text').disabled = false;
+    $('send').disabled = false;
+    socket.send(JSON.stringify({ since: lastSeenId }));
+  };
+
+  socket.onmessage = (event) => render(JSON.parse(event.data));
+
+  socket.onclose = () => {
+    $('status').textContent = 'связь потеряна, переподключаюсь…';
+    $('text').disabled = true;
+    $('send').disabled = true;
+    setTimeout(connect, 1000);
+  };
+}
+
+$('composer').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!$('text').value) return;
+  socket.send(JSON.stringify({ ciphertext: seal($('text').value) }));
+  $('text').value = '';
+});
+
+connect();
 </script>
 </body>
 </html>
