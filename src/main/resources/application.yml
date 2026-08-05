@@ -1,0 +1,27 @@
+app:
+  data-dir: ./data
+
+spring:
+  datasource:
+    # foreign_keys: в SQLite внешние ключи выключены по умолчанию, и без этого флага
+    #   ON DELETE CASCADE во всей схеме — просто комментарий.
+    # В URL держать только те параметры, которые знает драйвер: неизвестный параметр
+    #   xerial не отбрасывает и не ругается, а оставляет в имени файла — база тихо
+    #   создаётся под именем «messenger.db?что-то=что-то».
+    url: jdbc:sqlite:${app.data-dir:./data}/messenger.db?journal_mode=WAL&busy_timeout=5000&foreign_keys=true
+    hikari:
+      # SQLite однопоточен на запись, пул из десятка соединений даёт только SQLITE_BUSY.
+      maximum-pool-size: 4
+  flyway:
+    enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+server:
+  shutdown: graceful
+
+logging:
+  level:
+    # Undertow пишет запрошенные пути; фрагмента URL в них нет по устройству HTTP,
+    # но и полные пути в INFO нам не нужны.
+    io.undertow: WARN
