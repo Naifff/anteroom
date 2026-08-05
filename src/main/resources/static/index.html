@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Фрагмент URL Referer и так не переносит, но и путь наружу отдавать незачем. -->
+<meta name="referrer" content="no-referrer">
+<title>Вылазка — скелет</title>
+<style>
+  body { font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.1rem; font-weight: 600; }
+  #status { color: #6b7280; font-size: .85rem; }
+  #feed { margin: 1rem 0; min-height: 12rem; }
+  .msg { padding: .35rem 0; border-bottom: 1px solid #f0f0f0; }
+  .who { color: #6b7280; font-size: .8rem; font-family: ui-monospace, monospace; }
+  .bad { color: #7f1d1d; }
+  form { display: flex; gap: .5rem; }
+  input { flex: 1; padding: .5rem; font: inherit; }
+  button { padding: .5rem 1rem; font: inherit; }
+  footer { margin-top: 2rem; color: #6b7280; font-size: .8rem; }
+  code { font-family: ui-monospace, monospace; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<h1>Вылазка — скелет комнаты</h1>
+<p id="status">Загрузка…</p>
+
+<div id="feed"></div>
+
+<form id="composer">
+  <input id="text" placeholder="Сообщение" autocomplete="off" disabled>
+  <button disabled>Отправить</button>
+</form>
+
+<footer>
+  Сообщение живёт минуту. Аутентификации ещё нет — наружу не выставлять.
+  Вторую вкладку открывать <b>этой же ссылкой целиком</b>, вместе с частью после <code>#</code>:
+  без неё ключа нет и лента будет нечитаемой.
+</footer>
+
+<script src="/vendor/libsodium-sumo.js"></script>
+<script src="/vendor/libsodium-wrappers-sumo.js"></script>
+<script>
+(async () => {
+  await sodium.ready;
+
+  const B64 = sodium.base64_variants.URLSAFE_NO_PADDING;
+  const status = document.getElementById('status');
+  const feed = document.getElementById('feed');
+  const text = document.getElementById('text');
+  const composer = document.getElementById('composer');
+
+  // Ключ комнаты живёт во фрагменте и на сервер не уходит: фрагмент не попадает ни в
+  // запрос, ни в логи, ни в Referer. Перекладывать его в query или путь — баг, а не удобство.
+  let roomKey;
+  if (location.hash.length > 1) {
+    roomKey = sodium.from_base64(location.hash.slice(1), B64);
+  } else {
+    roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
+    location.hash = sodium.to_base64(roomKey, B64);
+  }
+
+  const NONCE = sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+
+  function seal(plaintext) {
+    const nonce = sodium.randombytes_buf(NONCE);
+    const box = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+      sodium.from_string(plaintext), null, null, nonce, roomKey);
+    const packed = new Uint8Array(nonce.length + box.length);
+    packed.set(nonce);
+    packed.set(box, nonce.length);
+    return sodium.to_base64(packed, sodium.base64_variants.ORIGINAL);
+  }
+
+  function open(payload) {
+    const packed = sodium.from_base64(payload, sodium.base64_variants.ORIGINAL);
+    return sodium.to_string(sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+      null, packed.slice(NONCE), null, packed.slice(0, NONCE), roomKey));
+  }
+
+  // Догрузка идёт от последнего увиденного id, поэтому реконнект не задваивает ленту
+  // и не требует перерисовки всего.
+  let lastSeenId = 0;
+  let socket;
+
+  function render(frame) {
+    lastSeenId = Math.max(lastSeenId, frame.id);
+
+    const row = document.createElement('div');
+    row.className = 'msg';
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.textContent = frame.sender.slice(0, 8);
+    const body = document.createElement('div');
+    try {
+      body.textContent = open(frame.ciphertext);
+    } catch (e) {
+      // Ровно то, что видит участник без ключа — и то, что видит сервер всегда.
+      body.className = 'bad';
+      body.textContent = 'не расшифровывается: ключ от другой комнаты';
+    }
+    row.append(who, body);
+    feed.append(row);
+  }
+
+  function connect() {
+    socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+
+    socket.onopen = () => {
+      status.textContent = 'на связи';
+      text.disabled = false;
+      composer.querySelector('button').disabled = false;
+      socket.send(JSON.stringify({ since: lastSeenId }));
+    };
+
+    socket.onmessage = (event) => render(JSON.parse(event.data));
+
+    socket.onclose = () => {
+      status.textContent = 'связь потеряна, переподключаюсь…';
+      text.disabled = true;
+      composer.querySelector('button').disabled = true;
+      setTimeout(connect, 1000);
+    };
+  }
+
+  composer.addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (!text.value) return;
+    // Своё сообщение рисуется по ответу сервера, а не сразу: id приходит оттуда,
+    // и без него догрузка после реконнекта показала бы его второй раз.
+    socket.send(JSON.stringify({ ciphertext: seal(text.value) }));
+    text.value = '';
+  });
+
+  connect();
+})();
+</script>
+</body>
+</html>
