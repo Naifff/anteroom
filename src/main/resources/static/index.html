@@ -83,8 +83,8 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 
 <div class="app">
   <div class="top">
-    <div class="room">Вылазка</div>
-    <button class="me-chip" id="meChip" aria-haspopup="dialog">ключ <b id="meFp">…</b></button>
+    <div class="room" id="roomTitle">Вылазка</div>
+    <button class="me-chip" id="meChip" aria-haspopup="dialog"><b id="seats">…</b> · <span id="meFp">…</span></button>
   </div>
 
   <div class="feed" id="feed"></div>
@@ -539,17 +539,46 @@ $('doImport').addEventListener('click', async () => {
   }
 });
 
-/* ---------- лента скелета ---------- */
-
-let roomKey;
-if (location.hash.length > 1) {
-  roomKey = sodium.from_base64(location.hash.slice(1), B64);
-} else {
-  roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
-  location.hash = sodium.to_base64(roomKey, B64);
-}
+/* ---------- комната ---------- */
 
 const NONCE = sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+
+const RANKS = ['2','3','4','5','6','7','8','9','10','В','Д','К','Т'];
+// Масти монохромные и различаются формой. Красный не вводить: акцентный цвет
+// зарезервирован под необратимые действия.
+// \uFE0E — селектор текстового начертания: без него ♦ и ♥ на части платформ
+// подставляются эмодзи, то есть красными, а красный тут запрещён.
+const SUITS = ['\u2660\uFE0E', '\u2663\uFE0E', '\u2666\uFE0E', '\u2665\uFE0E'];
+
+function cardName(card) {
+  return RANKS[card % 13] + ' ' + SUITS[Math.floor(card / 13)];
+}
+
+// Комната и ключ от неё живут во фрагменте: «<номер>.<ключ>». Фрагмент на сервер
+// не уходит, поэтому ссылка целиком — это и есть приглашение. В фазе 6 её заменит
+// одноразовый токен с эфемерным ключом.
+let roomId = null;
+let roomKey = null;
+let epoch = 1;
+let lastSeenId = 0;
+let entered = false;
+let socket;
+
+function readLink() {
+  const raw = location.hash.slice(1);
+  if (!raw) return;
+  // Ключ в ссылке необязателен: «#<номер>» — это возврат в свою комнату, ключ к которой
+  // сервер отдаст обёрткой под наш X25519. С ключом — приглашение для нового участника.
+  const dot = raw.indexOf('.');
+  roomId = decodeURIComponent(dot < 0 ? raw : raw.slice(0, dot));
+  if (dot >= 0) {
+    roomKey = sodium.from_base64(raw.slice(dot + 1), B64);
+  }
+}
+
+function writeLink() {
+  location.hash = encodeURIComponent(roomId) + '.' + sodium.to_base64(roomKey, B64);
+}
 
 function seal(plaintext) {
   const nonce = sodium.randombytes_buf(NONCE);
@@ -567,30 +596,129 @@ function open(payload) {
     null, packed.slice(NONCE), null, packed.slice(0, NONCE), roomKey));
 }
 
-let lastSeenId = 0;
-let socket;
+const cards = new Map();
+
+// Шифротекст держим при строке: когда ключ комнаты приедет обёрткой, лента
+// перерисовывается на месте, а не перезапрашивается. Перезапрос задваивал реплики.
+const shown = new Map();
+
+function fill(bubble, ciphertext) {
+  bubble.classList.remove('bad');
+  if (!roomKey) {
+    bubble.classList.add('bad');
+    bubble.textContent = 'ключа комнаты нет — расшифровать нечем';
+    return;
+  }
+  try {
+    bubble.textContent = open(ciphertext);
+  } catch {
+    bubble.classList.add('bad');
+    bubble.textContent = 'не расшифровывается: ключ от другой эпохи или другой комнаты';
+  }
+}
 
 function render(frame) {
+  // Один и тот же id второй раз приходит при наложении догрузки на рассылку.
+  if (shown.has(frame.id)) return;
   lastSeenId = Math.max(lastSeenId, frame.id);
 
   const row = document.createElement('div');
   row.className = 'msg';
   const who = document.createElement('div');
   who.className = 'who';
-  // Тот же вид, что и в шторке «Ваш ключ»: одна личность не должна выглядеть
-  // по-разному в двух местах экрана.
-  who.textContent = shortFingerprint(frame.sender);
+  // Карта, а не отпечаток: она и есть имя участника в комнате. Отпечаток остаётся
+  // якорем доверия и живёт в шторке, карта только подсказка памяти.
+  const card = cards.get(frame.sender);
+  who.textContent = card === undefined ? shortFingerprint(frame.sender) : cardName(card);
+
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
-  try {
-    bubble.textContent = open(frame.ciphertext);
-  } catch {
-    bubble.classList.add('bad');
-    bubble.textContent = 'не расшифровывается: ключ от другой комнаты';
-  }
+  fill(bubble, frame.ciphertext);
+
   row.append(who, bubble);
+  shown.set(frame.id, { bubble, ciphertext: frame.ciphertext, sender: frame.sender, who });
   $('feed').append(row);
   $('feed').scrollTop = $('feed').scrollHeight;
+}
+
+function redraw() {
+  for (const entry of shown.values()) {
+    fill(entry.bubble, entry.ciphertext);
+    const card = cards.get(entry.sender);
+    if (card !== undefined) {
+      entry.who.textContent = cardName(card);
+    }
+  }
+}
+
+function ask(frame) {
+  socket.send(JSON.stringify(frame));
+}
+
+/**
+ * Раздаёт ключ комнаты тем, у кого обёртки этой эпохи ещё нет.
+ *
+ * Обёртка — sealed box под X25519 участника: развернуть её может только он, а сервер
+ * видит непрозрачный блоб. Раздать может любой, у кого ключ уже есть.
+ */
+function wrapForPending(pending) {
+  if (!roomKey) return;
+  for (const seat of pending) {
+    if (!seat.box) continue;   // устройство ещё не прислало свой X25519
+    ask({
+      op: 'wrap', room: roomId, epoch, device: seat.device,
+      wrapped: sodium.to_base64(
+        sodium.crypto_box_seal(roomKey, sodium.from_base64(seat.box, B64)),
+        sodium.base64_variants.ORIGINAL),
+    });
+  }
+}
+
+function onRoom(frame) {
+  roomId = frame.room;
+  epoch = frame.epoch;
+  cards.clear();
+  for (const seat of frame.members) {
+    cards.set(seat.device, seat.card);
+  }
+
+  $('roomTitle').textContent = 'Вылазка';
+  $('seats').textContent = `${cardName(frame.card)} · ${frame.seatsTaken}/52`;
+  if (frame.deckSpent) {
+    $('status').textContent = 'колода кончилась — комната больше никого не принимает';
+  }
+
+  // Вход в ленту — отдельным кадром и ровно один раз за соединение: до него сервер
+  // не знает, что этой сессии надо слать рассылку, и своё же сообщение не вернётся.
+  // Флаг обязателен: ответ на enter — такой же кадр room, и без него вышел бы цикл.
+  if (!entered) {
+    entered = true;
+    ask({ op: 'enter', room: roomId, since: lastSeenId });
+  }
+
+  redraw();
+
+  if (roomKey) {
+    writeLink();
+    wrapForPending(frame.needWrap);
+  } else {
+    // Ключа нет: просим свою обёртку. Так входит устройство, открывшее адрес без
+    // фрагмента, — например восстановленное из слов.
+    ask({ op: 'key', room: roomId, epoch });
+  }
+}
+
+function onKey(frame) {
+  if (!frame.wrapped) {
+    $('status').textContent = 'ключ комнаты ещё не выдан — попросите участника открыть вкладку';
+    return;
+  }
+  roomKey = sodium.crypto_box_seal_open(
+    sodium.from_base64(frame.wrapped, sodium.base64_variants.ORIGINAL),
+    keys.boxPublic, keys.boxSecret);
+  writeLink();
+  // Лента успела нарисоваться нерасшифрованной, пока ключа не было.
+  redraw();
 }
 
 /**
@@ -598,7 +726,7 @@ function render(frame) {
  * Приватный ключ никуда не уходит, пароля нет.
  *
  * Вызов и подпись едут параметрами запроса, а не во фрагменте: секрета в них нет,
- * оба одноразовые. Фрагмент занят ключом комнаты, и класть туда что-то ещё незачем.
+ * оба одноразовые. Фрагмент занят комнатой и ключом от неё.
  */
 async function signedSocketUrl() {
   const response = await fetch('/api/challenge');
@@ -608,8 +736,8 @@ async function signedSocketUrl() {
   const challenge = await response.json();
   const nonce = sodium.from_base64(challenge.nonce, B64);
 
-  // Подпись сервера под вызовом проверяется до того, как мы подпишем что-либо своим
-  // ключом: она отличает наш сервер от подставленного посередине.
+  // Подпись сервера проверяется до того, как мы подпишем что-либо своим ключом:
+  // она отличает наш сервер от подставленного посередине.
   const serverKey = sodium.from_base64(challenge.serverPublicKey, B64);
   if (!sodium.crypto_sign_verify_detached(sodium.from_base64(challenge.serverSignature, B64), nonce, serverKey)) {
     throw new Error('сервер не подтвердил вызов своей подписью');
@@ -626,16 +754,15 @@ async function signedSocketUrl() {
 
 /**
  * Отпечаток сервера запоминается при первом входе. Смена ключа — это либо переустановка
- * сервера, либо подмена, и молчать об этом нельзя: именно этот ключ отличает наш сервер
- * от чужого при входе.
+ * сервера, либо подмена, и молчать об этом нельзя.
  */
 async function rememberServerKey(current) {
   const known = await loadServerKey();
   if (!known) {
     await saveServerKey(current);
   } else if (known !== current) {
-    // Не блокируем вход: у самохостера это чаще переустановка сервера, чем подмена.
-    // Но и молчать нельзя — отличить одно от другого может только человек.
+    // Не блокируем вход: у самохостера это чаще переустановка, чем подмена. Но и молчать
+    // нельзя — отличить одно от другого может только человек.
     $('status').textContent = 'ключ сервера сменился с прошлого входа — проверьте, что это ваш сервер';
   }
 }
@@ -656,10 +783,26 @@ async function connect() {
     $('status').textContent = 'вход по подписи; регистрация открыта до фазы инвайтов — наружу не выставлять';
     $('text').disabled = false;
     $('send').disabled = false;
-    socket.send(JSON.stringify({ since: lastSeenId }));
+
+    // Свой X25519 — первым делом: без него участнику нечем обернуть ключ комнаты.
+    ask({ op: 'hello', box: sodium.to_base64(keys.boxPublic, B64) });
+
+    entered = false;
+    if (!roomId) {
+      roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
+      ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
+    } else {
+      ask({ op: 'join', room: roomId });
+    }
   };
 
-  socket.onmessage = (event) => render(JSON.parse(event.data));
+  socket.onmessage = (event) => {
+    const frame = JSON.parse(event.data);
+    if (frame.op === 'room') onRoom(frame);
+    else if (frame.op === 'msg') render(frame);
+    else if (frame.op === 'key') onKey(frame);
+    else if (frame.op === 'error') $('status').textContent = frame.reason;
+  };
 
   socket.onclose = () => {
     $('status').textContent = 'связь потеряна, переподключаюсь…';
@@ -671,11 +814,12 @@ async function connect() {
 
 $('composer').addEventListener('submit', (event) => {
   event.preventDefault();
-  if (!$('text').value) return;
-  socket.send(JSON.stringify({ ciphertext: seal($('text').value) }));
+  if (!$('text').value || !roomKey) return;
+  ask({ op: 'send', room: roomId, ciphertext: seal($('text').value) });
   $('text').value = '';
 });
 
+readLink();
 connect();
 </script>
 </body>

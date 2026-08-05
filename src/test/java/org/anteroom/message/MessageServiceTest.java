@@ -62,8 +62,8 @@ class MessageServiceTest {
 
     @Test
     void returnsSavedMessagesInSendOrder() {
-        messages.save(ROOM, "device-1", 1, "первое".getBytes());
-        messages.save(ROOM, "device-2", 1, "второе".getBytes());
+        messages.save(ROOM, "device-1", 1, "первое".getBytes(), 60);
+        messages.save(ROOM, "device-2", 1, "второе".getBytes(), 60);
 
         assertThat(messages.since(ROOM, 0))
                 .extracting(m -> new String(m.ciphertext()))
@@ -74,7 +74,7 @@ class MessageServiceTest {
     void hidesExpiredMessageBeforeSweeperRuns() {
         // Гипотеза фазы 1: протухшее не отдаётся благодаря фильтру при чтении, а не потому
         // что sweeper успел. Между тиками сервер обязан молчать о просроченном.
-        messages.save(ROOM, "device-1", 1, "минутка".getBytes());
+        messages.save(ROOM, "device-1", 1, "минутка".getBytes(), 60);
 
         clock.advance(Duration.ofSeconds(61));
 
@@ -86,7 +86,7 @@ class MessageServiceTest {
 
     @Test
     void keepsMessageUntilItsDeadline() {
-        messages.save(ROOM, "device-1", 1, "минутка".getBytes());
+        messages.save(ROOM, "device-1", 1, "минутка".getBytes(), 60);
 
         clock.advance(Duration.ofSeconds(59));
 
@@ -95,8 +95,8 @@ class MessageServiceTest {
 
     @Test
     void returnsOnlyMessagesNewerThanLastSeen() {
-        long first = messages.save(ROOM, "device-1", 1, "первое".getBytes()).id();
-        messages.save(ROOM, "device-1", 1, "второе".getBytes());
+        long first = messages.save(ROOM, "device-1", 1, "первое".getBytes(), 60).id();
+        messages.save(ROOM, "device-1", 1, "второе".getBytes(), 60);
 
         assertThat(messages.since(ROOM, first))
                 .extracting(m -> new String(m.ciphertext()))
@@ -105,16 +105,16 @@ class MessageServiceTest {
 
     @Test
     void doesNotLeakBetweenRooms() {
-        messages.save(OTHER_ROOM, "device-1", 1, "чужое".getBytes());
+        messages.save(OTHER_ROOM, "device-1", 1, "чужое".getBytes(), 60);
 
         assertThat(messages.since(ROOM, 0)).isEmpty();
     }
 
     @Test
     void sweepDeletesExpiredAndKeepsLive() {
-        messages.save(ROOM, "device-1", 1, "старое".getBytes());
+        messages.save(ROOM, "device-1", 1, "старое".getBytes(), 60);
         clock.advance(Duration.ofSeconds(61));
-        messages.save(ROOM, "device-1", 1, "свежее".getBytes());
+        messages.save(ROOM, "device-1", 1, "свежее".getBytes(), 60);
 
         int deleted = messages.sweepExpired();
 
@@ -125,10 +125,21 @@ class MessageServiceTest {
     }
 
     @Test
+    void livesAsLongAsTheRoomSays() {
+        // Срок берётся из настроек комнаты, а не из константы: раз комната его хранит,
+        // игнорировать его — значит держать в схеме поле-обманку.
+        messages.save(ROOM, "device-1", 1, "долгое".getBytes(), 3600);
+
+        clock.advance(Duration.ofSeconds(120));
+
+        assertThat(messages.since(ROOM, 0)).hasSize(1);
+    }
+
+    @Test
     void restartDoesNotResurrectExpiredMessages() {
         // Хранится абсолютный дедлайн, а не остаток TTL: простой сервера в жизни
         // сообщения не участвует. Новый MessageService поверх той же базы — модель рестарта.
-        messages.save(ROOM, "device-1", 1, "старое".getBytes());
+        messages.save(ROOM, "device-1", 1, "старое".getBytes(), 60);
         clock.advance(Duration.ofSeconds(61));
 
         MessageService afterRestart = new MessageService(jdbc, clock);

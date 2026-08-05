@@ -2,7 +2,6 @@ package org.anteroom.message;
 
 import java.sql.PreparedStatement;
 import java.time.Clock;
-import java.time.Duration;
 import java.util.List;
 
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,13 +12,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class MessageService {
 
-    /**
-     * Срок жизни сообщения в скелете. Постоянная и короткая нарочно: фаза 1 проверяет,
-     * что протухшее исчезает, а не что сроками можно управлять. Выбор срока отправителем
-     * и зажим на сервере — фаза 7.
-     */
-    static final Duration SKELETON_TTL = Duration.ofSeconds(60);
-
     private final JdbcTemplate jdbc;
     private final Clock clock;
 
@@ -28,11 +20,15 @@ public class MessageService {
         this.clock = clock;
     }
 
-    public StoredMessage save(String roomId, String sender, int epoch, byte[] ciphertext) {
+    /**
+     * @param ttlSeconds срок жизни; сейчас его даёт комната. Выбор срока отправителем
+     *                   и зажим присланного значения — фаза 7
+     */
+    public StoredMessage save(String roomId, String sender, int epoch, byte[] ciphertext, long ttlSeconds) {
         long now = clock.millis();
         // Хранится абсолютный дедлайн, а не остаток срока: рестарт и простой сервера
         // в жизни сообщения не участвуют.
-        long expiresAt = now + SKELETON_TTL.toMillis();
+        long expiresAt = now + ttlSeconds * 1000;
 
         KeyHolder key = new GeneratedKeyHolder();
         jdbc.update(connection -> {
