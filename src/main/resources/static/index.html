@@ -169,7 +169,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 <script src="/vendor/libsodium-sumo.js"></script>
 <script src="/vendor/libsodium-wrappers-sumo.js"></script>
 <script type="module">
-import { newSeed, keysFromSeed, saveSeed, loadSeed } from '/js/identity.js';
+import { newSeed, keysFromSeed, saveSeed, loadSeed, saveServerKey, loadServerKey } from '/js/identity.js';
 import { seedToWords, wordsToSeed } from '/js/words.js';
 import { encryptSeed, decryptSeed } from '/js/keyfile.js';
 
@@ -186,6 +186,14 @@ if (!seed) {
   await saveSeed(seed);
 }
 let keys = keysFromSeed(seed);
+
+function shortFingerprint(base64Key) {
+  try {
+    return sodium.to_hex(sodium.from_base64(base64Key, B64)).slice(0, 8);
+  } catch {
+    return base64Key.slice(0, 8);
+  }
+}
 
 function showIdentity() {
   const hex = sodium.to_hex(keys.signPublic);
@@ -569,7 +577,9 @@ function render(frame) {
   row.className = 'msg';
   const who = document.createElement('div');
   who.className = 'who';
-  who.textContent = frame.sender.slice(0, 8);
+  // Тот же вид, что и в шторке «Ваш ключ»: одна личность не должна выглядеть
+  // по-разному в двух местах экрана.
+  who.textContent = shortFingerprint(frame.sender);
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   try {
@@ -583,11 +593,67 @@ function render(frame) {
   $('feed').scrollTop = $('feed').scrollHeight;
 }
 
-function connect() {
-  socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+/**
+ * Вход: сервер даёт одноразовый вызов, браузер подписывает его ключом устройства.
+ * Приватный ключ никуда не уходит, пароля нет.
+ *
+ * Вызов и подпись едут параметрами запроса, а не во фрагменте: секрета в них нет,
+ * оба одноразовые. Фрагмент занят ключом комнаты, и класть туда что-то ещё незачем.
+ */
+async function signedSocketUrl() {
+  const response = await fetch('/api/challenge');
+  if (!response.ok) {
+    throw new Error(response.status === 429 ? 'слишком много попыток входа' : 'сервер не выдал вызов');
+  }
+  const challenge = await response.json();
+  const nonce = sodium.from_base64(challenge.nonce, B64);
+
+  // Подпись сервера под вызовом проверяется до того, как мы подпишем что-либо своим
+  // ключом: она отличает наш сервер от подставленного посередине.
+  const serverKey = sodium.from_base64(challenge.serverPublicKey, B64);
+  if (!sodium.crypto_sign_verify_detached(sodium.from_base64(challenge.serverSignature, B64), nonce, serverKey)) {
+    throw new Error('сервер не подтвердил вызов своей подписью');
+  }
+  await rememberServerKey(challenge.serverPublicKey);
+
+  const signature = sodium.crypto_sign_detached(nonce, keys.signSecret);
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${location.host}/ws`
+    + `?nonce=${encodeURIComponent(challenge.nonce)}`
+    + `&device=${encodeURIComponent(sodium.to_base64(keys.signPublic, B64))}`
+    + `&signature=${encodeURIComponent(sodium.to_base64(signature, B64))}`;
+}
+
+/**
+ * Отпечаток сервера запоминается при первом входе. Смена ключа — это либо переустановка
+ * сервера, либо подмена, и молчать об этом нельзя: именно этот ключ отличает наш сервер
+ * от чужого при входе.
+ */
+async function rememberServerKey(current) {
+  const known = await loadServerKey();
+  if (!known) {
+    await saveServerKey(current);
+  } else if (known !== current) {
+    // Не блокируем вход: у самохостера это чаще переустановка сервера, чем подмена.
+    // Но и молчать нельзя — отличить одно от другого может только человек.
+    $('status').textContent = 'ключ сервера сменился с прошлого входа — проверьте, что это ваш сервер';
+  }
+}
+
+async function connect() {
+  let url;
+  try {
+    url = await signedSocketUrl();
+  } catch (e) {
+    $('status').textContent = `${e.message}, повтор через 5 с`;
+    setTimeout(connect, 5000);
+    return;
+  }
+
+  socket = new WebSocket(url);
 
   socket.onopen = () => {
-    $('status').textContent = 'аутентификации ещё нет — наружу не выставлять';
+    $('status').textContent = 'вход по подписи; регистрация открыта до фазы инвайтов — наружу не выставлять';
     $('text').disabled = false;
     $('send').disabled = false;
     socket.send(JSON.stringify({ since: lastSeenId }));

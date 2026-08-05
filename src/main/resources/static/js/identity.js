@@ -10,6 +10,7 @@ const DB_NAME = 'anteroom';
 const DB_VERSION = 1;
 const STORE = 'identity';
 const SEED_KEY = 'seed';
+const SERVER_KEY = 'server-key';
 
 /** Домен для вывода под-seed ключа шифрования. Менять нельзя: сменится — сменится личность. */
 const BOX_DOMAIN = 'box';
@@ -59,6 +60,31 @@ export async function loadSeed() {
     try {
         const stored = await run(db, 'readonly', (store) => store.get(SEED_KEY));
         return stored === undefined ? null : new Uint8Array(stored);
+    } finally {
+        db.close();
+    }
+}
+
+/**
+ * Отпечаток сервера, запомненный при первом входе.
+ *
+ * Не секрет — это публичный ключ, — но живёт там же, где seed, а не в localStorage:
+ * одно хранилище на всё состояние личности, и очистка данных сайта уносит его целиком.
+ */
+export async function saveServerKey(publicKey) {
+    const db = await open();
+    try {
+        await run(db, 'readwrite', (store) => store.put(publicKey, SERVER_KEY));
+    } finally {
+        db.close();
+    }
+}
+
+export async function loadServerKey() {
+    const db = await open();
+    try {
+        const stored = await run(db, 'readonly', (store) => store.get(SERVER_KEY));
+        return stored === undefined ? null : stored;
     } finally {
         db.close();
     }

@@ -60,9 +60,13 @@ public class RoomSocketHandler extends TextWebSocketHandler {
 
         byte[] ciphertext = Base64.getDecoder().decode(frame.get("ciphertext").asText());
 
+        // Отправитель — ключ подписи, проверенный на апгрейде, а не id сессии: id живёт
+        // одно соединение, а автор реплики должен быть узнаваем и после реконнекта.
+        String sender = (String) session.getAttributes().get(AuthHandshakeInterceptor.DEVICE_ATTRIBUTE);
+
         // Отправителю тоже: его вкладка рисует сообщение по подтверждению с id, а не сразу,
         // иначе после реконнекта оно задвоится с тем, что придёт из догрузки.
-        broadcast(messages.save(SKELETON_ROOM, session.getId(), 1, ciphertext));
+        broadcast(messages.save(SKELETON_ROOM, sender, 1, ciphertext));
     }
 
     @Override

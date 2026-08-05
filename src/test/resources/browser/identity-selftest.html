@@ -122,6 +122,21 @@ await check('повторная запись не плодит вторую ли
   assert(same(await identity.loadSeed(), seed), 'хранилище раздвоилось');
 });
 
+await check('отпечаток сервера запоминается и читается', async () => {
+  await identity.forgetSeed();
+  assert(await identity.loadServerKey() === null, 'на пустом хранилище вернулся не null');
+  await identity.saveServerKey('ключ-сервера');
+  assert(await identity.loadServerKey() === 'ключ-сервера', 'прочиталось не то');
+});
+
+await check('отпечаток сервера не трогает seed', async () => {
+  // Оба живут в одном хранилище, и запись одного не должна затирать другое.
+  const seed = identity.newSeed();
+  await identity.saveSeed(seed);
+  await identity.saveServerKey('другой-ключ');
+  assert(same(await identity.loadSeed(), seed), 'seed потерялся при записи ключа сервера');
+});
+
 await check('seed не утёк в localStorage и sessionStorage', async () => {
   // Оба переживают куда более грубые способы утечки, чем IndexedDB, и оба
   // читаются любым скриптом на странице.

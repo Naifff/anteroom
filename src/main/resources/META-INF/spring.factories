@@ -1,2 +1,4 @@
 org.springframework.context.ApplicationListener=\
 org.anteroom.config.DataDirectoryInitializer
+org.springframework.boot.diagnostics.FailureAnalyzer=\
+org.anteroom.auth.ServerKeyFailureAnalyzer

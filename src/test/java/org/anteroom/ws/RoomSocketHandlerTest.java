@@ -7,12 +7,16 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyPair;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.Comparator;
+import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import org.anteroom.auth.Ed25519Keys;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +45,9 @@ class RoomSocketHandlerTest {
 
     @Autowired
     private JdbcTemplate jdbc;
+
+    @Autowired
+    private org.springframework.boot.test.web.client.TestRestTemplate rest;
 
     @BeforeAll
     static void startFromEmptyDirectory() throws IOException {
@@ -132,8 +139,24 @@ class RoomSocketHandlerTest {
         return Long.parseLong(frame.substring(from, to).trim());
     }
 
+    /**
+     * Каждое соединение проходит настоящий вход: свой вызов, своя подпись. Одним вызовом
+     * два соединения не поднять — он гасится при использовании, и это проверяет
+     * {@code AuthHandshakeInterceptorTest}.
+     */
     private Client connect() throws Exception {
-        return new Client(URI.create("ws://localhost:" + port + "/ws"));
+        KeyPair device = Ed25519Keys.newKeyPair();
+        @SuppressWarnings("unchecked")
+        Map<String, String> challenge = rest.getForObject("/api/challenge", Map.class);
+        String nonce = challenge.get("nonce");
+
+        Base64.Encoder encoder = Base64.getUrlEncoder().withoutPadding();
+        String signature = encoder.encodeToString(
+                Ed25519Keys.sign(Base64.getUrlDecoder().decode(nonce), device.getPrivate()));
+        String pubkey = encoder.encodeToString(Ed25519Keys.rawPublicKey(device.getPublic()));
+
+        return new Client(URI.create("ws://localhost:" + port + "/ws"
+                + "?nonce=" + nonce + "&device=" + pubkey + "&signature=" + signature));
     }
 
     private static final class Client extends TextWebSocketHandler implements AutoCloseable {
