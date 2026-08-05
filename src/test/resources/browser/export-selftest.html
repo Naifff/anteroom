@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Самопроверка экспорта ключа</title>
+<style>
+  body { font: 14px/1.6 ui-monospace, monospace; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+  .pass::before { content: "PASS "; color: #14532d; }
+  .fail::before { content: "FAIL "; color: #7f1d1d; }
+  .fail { color: #7f1d1d; }
+  #total { font-weight: bold; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+<h1>Самопроверка экспорта ключа</h1>
+<p>Слова сверяются с официальными векторами BIP-39, не с собственным пониманием спецификации.</p>
+<div id="total">выполняется…</div>
+<div id="results"></div>
+
+<script src="/vendor/libsodium-sumo.js"></script>
+<script src="/vendor/libsodium-wrappers-sumo.js"></script>
+<script type="module">
+import { seedToWords, wordsToSeed } from '/js/words.js';
+import { encryptSeed, decryptSeed } from '/js/keyfile.js';
+
+const results = document.getElementById('results');
+let passed = 0;
+let failed = 0;
+
+async function check(name, body) {
+  const row = document.createElement('div');
+  try {
+    await body();
+    row.className = 'pass';
+    row.textContent = name;
+    passed++;
+  } catch (e) {
+    row.className = 'fail';
+    row.textContent = `${name} — ${e.message}`;
+    failed++;
+  }
+  results.append(row);
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function same(a, b) {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
+await sodium.ready;
+
+// Официальные векторы BIP-39 для 256 бит энтропии, github.com/trezor/python-mnemonic.
+const VECTORS = [
+  ['0000000000000000000000000000000000000000000000000000000000000000', 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art'],
+  ['7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f', 'legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth useful legal winner thank year wave sausage worth title'],
+  ['8080808080808080808080808080808080808080808080808080808080808080', 'letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic avoid letter advice cage absurd amount doctor acoustic bless'],
+  ['ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', 'zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo vote'],
+  ['68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c', 'hamster diagram private dutch cause delay private meat slide toddler razor book happy fancy gospel tennis maple dilemma loan word shrug inflict delay length'],
+  ['9f6a2878b2520799a44ef18bc7df394e7061a224d2c33cd015b157d746869863', 'panda eyebrow bullet gorilla call smoke muffin taste mesh discover soft ostrich alcohol speed nation flash devote level hobby quick inner drive ghost inside'],
+  ['066dca1a2bb7e8a1db2832148ce9933eea0f3ac9548d793112d9a95c9407efad', 'all hour make first leader extend hole alien behind guard gospel lava path output census museum junior mass reopen famous sing advance salt reform'],
+  ['f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f', 'void come effort suffer camp survey warrior heavy shoot primary clutch crush open amazing screen patrol group space point ten exist slush involve unfold'],
+];
+
+await check('seed кодируется в слова по векторам BIP-39', async () => {
+  for (const [hex, words] of VECTORS) {
+    const got = seedToWords(sodium.from_hex(hex));
+    assert(got.join(' ') === words, `на ${hex.slice(0, 8)} вышло «${got.slice(0, 3).join(' ')}…»`);
+  }
+});
+
+await check('слова декодируются обратно в seed по тем же векторам', async () => {
+  for (const [hex, words] of VECTORS) {
+    assert(same(wordsToSeed(words.split(' ')), sodium.from_hex(hex)), `не сошлось на ${hex.slice(0, 8)}`);
+  }
+});
+
+await check('слов ровно 24', async () => {
+  assert(seedToWords(sodium.randombytes_buf(32)).length === 24, 'не 24 слова');
+});
+
+await check('порченая контрольная сумма отбивается', async () => {
+  // Иначе описка при переписывании с бумаги молча даёт другую личность, и человек
+  // видит пустую комнату вместо ошибки.
+  const words = seedToWords(sodium.from_hex(VECTORS[0][0]));
+  words[23] = 'zoo';
+  let rejected = false;
+  try { wordsToSeed(words); } catch { rejected = true; }
+  assert(rejected, 'приняты слова с неверной контрольной суммой');
+});
+
+await check('слово не из списка отбивается', async () => {
+  const words = seedToWords(sodium.randombytes_buf(32));
+  words[5] = 'привет';
+  let rejected = false;
+  try { wordsToSeed(words); } catch { rejected = true; }
+  assert(rejected, 'принято слово вне списка');
+});
+
+await check('регистр и лишние пробелы не мешают', async () => {
+  const words = VECTORS[0][1].toUpperCase().split(' ').map(w => `  ${w} `);
+  assert(same(wordsToSeed(words), sodium.from_hex(VECTORS[0][0])), 'не разобралось');
+});
+
+await check('неполный набор слов отбивается', async () => {
+  const words = seedToWords(sodium.randombytes_buf(32)).slice(0, 23);
+  let rejected = false;
+  try { wordsToSeed(words); } catch { rejected = true; }
+  assert(rejected, 'принято 23 слова');
+});
+
+await check('key.enc расшифровывается своей фразой', async () => {
+  const seed = sodium.randombytes_buf(32);
+  const file = await encryptSeed(seed, 'правильная лошадь батарейка скрепка');
+  assert(same(await decryptSeed(file, 'правильная лошадь батарейка скрепка'), seed), 'seed не совпал');
+});
+
+await check('key.enc не открывается чужой фразой', async () => {
+  const file = await encryptSeed(sodium.randombytes_buf(32), 'своя фраза');
+  let rejected = false;
+  try { await decryptSeed(file, 'чужая фраза'); } catch { rejected = true; }
+  assert(rejected, 'открылся не своей фразой');
+});
+
+await check('в key.enc нет seed открытым текстом', async () => {
+  const seed = sodium.randombytes_buf(32);
+  const file = new Uint8Array(await encryptSeed(seed, 'фраза'));
+  const hay = sodium.to_hex(file);
+  assert(!hay.includes(sodium.to_hex(seed)), 'seed лежит в файле как есть');
+});
+
+await check('две обёртки одного seed различаются', async () => {
+  // Одинаковый файл на одинаковую фразу означал бы отсутствие соли: по совпадению
+  // двух key.enc можно было бы понять, что это одна личность.
+  const seed = sodium.randombytes_buf(32);
+  const first = new Uint8Array(await encryptSeed(seed, 'фраза'));
+  const second = new Uint8Array(await encryptSeed(seed, 'фраза'));
+  assert(!same(first, second), 'файлы побайтно совпали');
+});
+
+await check('порченый key.enc отбивается, а не отдаёт мусор', async () => {
+  const file = new Uint8Array(await encryptSeed(sodium.randombytes_buf(32), 'фраза'));
+  file[file.length - 1] ^= 1;
+  let rejected = false;
+  try { await decryptSeed(file, 'фраза'); } catch { rejected = true; }
+  assert(rejected, 'принят повреждённый файл');
+});
+
+await check('чужой формат отбивается по заголовку', async () => {
+  let rejected = false;
+  try { await decryptSeed(new Uint8Array(64), 'фраза'); } catch { rejected = true; }
+  assert(rejected, 'принят файл без заголовка');
+});
+
+document.getElementById('total').textContent =
+  failed === 0 ? `всё сошлось: ${passed}` : `провалено ${failed} из ${passed + failed}`;
+</script>
+</body>
+</html>

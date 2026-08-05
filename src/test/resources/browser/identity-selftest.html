@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Самопроверка идентичности</title>
+<style>
+  body { font: 14px/1.6 ui-monospace, monospace; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+  .pass::before { content: "PASS "; color: #14532d; }
+  .fail::before { content: "FAIL "; color: #7f1d1d; }
+  .fail { color: #7f1d1d; }
+  #total { font-weight: bold; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+<h1>Самопроверка идентичности</h1>
+<p>Запускается против работающего сервера. В jar не попадает: лежит в <code>src/test/resources</code>.</p>
+<p><b>Стирает хранилище личности на этом origin.</b> Не открывать там, где лежит настоящий ключ.</p>
+<div id="total">выполняется…</div>
+<div id="results"></div>
+
+<script src="/vendor/libsodium-sumo.js"></script>
+<script src="/vendor/libsodium-wrappers-sumo.js"></script>
+<script type="module">
+import * as identity from '/js/identity.js';
+
+const results = document.getElementById('results');
+let passed = 0;
+let failed = 0;
+
+async function check(name, body) {
+  const row = document.createElement('div');
+  try {
+    await body();
+    row.className = 'pass';
+    row.textContent = name;
+    passed++;
+  } catch (e) {
+    row.className = 'fail';
+    row.textContent = `${name} — ${e.message}`;
+    failed++;
+  }
+  results.append(row);
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function same(a, b) {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
+await sodium.ready;
+
+await check('seed длиной 32 байта', async () => {
+  assert(identity.newSeed().length === 32, 'не 32 байта');
+});
+
+await check('два seed подряд различаются', async () => {
+  assert(!same(identity.newSeed(), identity.newSeed()), 'seed повторился');
+});
+
+await check('один seed даёт одни и те же ключи', async () => {
+  // Ради этого всё и затевалось: восстановление из слов должно давать ту же личность,
+  // ту же карту и доступ к старым wrapped_room_key.
+  const seed = identity.newSeed();
+  const first = identity.keysFromSeed(seed);
+  const second = identity.keysFromSeed(seed);
+  assert(same(first.signPublic, second.signPublic), 'ключ подписи разъехался');
+  assert(same(first.boxPublic, second.boxPublic), 'ключ шифрования разъехался');
+});
+
+await check('разные seed дают разные ключи', async () => {
+  const first = identity.keysFromSeed(identity.newSeed());
+  const second = identity.keysFromSeed(identity.newSeed());
+  assert(!same(first.signPublic, second.signPublic), 'ключи совпали');
+});
+
+await check('обе публичные части по 32 байта', async () => {
+  const keys = identity.keysFromSeed(identity.newSeed());
+  assert(keys.signPublic.length === 32, 'ed25519 не 32 байта');
+  assert(keys.boxPublic.length === 32, 'x25519 не 32 байта');
+});
+
+await check('ключ шифрования выведен отдельно от ключа подписи', async () => {
+  // Если x25519 вывести из того же seed напрямую, подпись и шифрование поедут
+  // на одном секрете, и компрометация одного заберёт второй.
+  const keys = identity.keysFromSeed(identity.newSeed());
+  assert(!same(keys.signSecret.slice(0, 32), keys.boxSecret), 'секреты совпали');
+});
+
+await check('подпись проверяется своим же ключом', async () => {
+  const keys = identity.keysFromSeed(identity.newSeed());
+  const challenge = sodium.randombytes_buf(32);
+  const signature = sodium.crypto_sign_detached(challenge, keys.signSecret);
+  assert(sodium.crypto_sign_verify_detached(signature, challenge, keys.signPublic), 'подпись не сошлась');
+});
+
+await check('sealed box разворачивается своим же ключом', async () => {
+  const keys = identity.keysFromSeed(identity.newSeed());
+  const roomKey = sodium.randombytes_buf(32);
+  const sealed = sodium.crypto_box_seal(roomKey, keys.boxPublic);
+  const opened = sodium.crypto_box_seal_open(sealed, keys.boxPublic, keys.boxSecret);
+  assert(same(opened, roomKey), 'обёртка ключа комнаты не развернулась');
+});
+
+await check('пустое хранилище отдаёт null', async () => {
+  await identity.forgetSeed();
+  assert(await identity.loadSeed() === null, 'вернулся не null');
+});
+
+await check('seed переживает запись и чтение', async () => {
+  const seed = identity.newSeed();
+  await identity.saveSeed(seed);
+  assert(same(await identity.loadSeed(), seed), 'прочиталось не то');
+});
+
+await check('повторная запись не плодит вторую личность', async () => {
+  const seed = identity.newSeed();
+  await identity.saveSeed(seed);
+  await identity.saveSeed(seed);
+  assert(same(await identity.loadSeed(), seed), 'хранилище раздвоилось');
+});
+
+await check('seed не утёк в localStorage и sessionStorage', async () => {
+  // Оба переживают куда более грубые способы утечки, чем IndexedDB, и оба
+  // читаются любым скриптом на странице.
+  assert(localStorage.length === 0, 'что-то легло в localStorage');
+  assert(sessionStorage.length === 0, 'что-то легло в sessionStorage');
+});
+
+document.getElementById('total').textContent =
+  failed === 0 ? `всё сошлось: ${passed}` : `провалено ${failed} из ${passed + failed}`;
+</script>
+</body>
+</html>
