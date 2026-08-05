@@ -572,6 +572,10 @@ let epoch = 1;
 let lastSeenId = 0;
 let entered = false;
 let inviteToken = null;
+// Отказ в создании комнаты запоминается: иначе вкладка, которую развернули на пороге,
+// при каждом переподключении пробует снова и заводит комнату молча — ровно в тот момент,
+// когда устройство наконец впустили.
+let createRefused = false;
 let socket;
 
 let pendingInvite = null;
@@ -584,9 +588,10 @@ function readLink() {
   // поэтому токена нет ни в логах, ни в Referer.
   if (location.pathname.startsWith('/join')) {
     const dot = raw.indexOf('.');
-    if (dot < 0) return;
-    inviteToken = raw.slice(0, dot);
-    pendingInvite = sodium.from_base64(raw.slice(dot + 1), B64);
+    // Owner-инвайт первого запуска идёт без эфемерного ключа: комнаты ещё нет,
+    // оборачивать нечего.
+    inviteToken = dot < 0 ? raw : raw.slice(0, dot);
+    pendingInvite = dot < 0 ? null : sodium.from_base64(raw.slice(dot + 1), B64);
     return;
   }
   // Ключ в ссылке необязателен: «#<номер>» — это возврат в свою комнату, ключ к которой
@@ -721,6 +726,15 @@ $('makeInvite').addEventListener('click', async () => {
 function onRedeemed(frame) {
   const secret = pendingInvite;
   pendingInvite = null;
+
+  if (!frame.room) {
+    // Owner-инвайт: комнаты нет, выдано право их заводить. Заводим первую сразу —
+    // отдельного экрана «вы владелец, теперь создайте комнату» не нужно.
+    history.replaceState(null, '', '/');
+    roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
+    ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
+    return;
+  }
 
   const wrapped = sodium.from_base64(frame.wrapped, B64ORIG);
   roomKey = sodium.crypto_box_seal_open(wrapped, sodium.crypto_scalarmult_base(secret), secret);
@@ -879,7 +893,7 @@ async function connect() {
     if (inviteToken) {
       ask({ op: 'redeem', token: inviteToken });
       inviteToken = null;
-    } else if (!roomId) {
+    } else if (!roomId && !createRefused) {
       roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
       ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
     } else {
@@ -894,7 +908,10 @@ async function connect() {
     else if (frame.op === 'msg') render(frame);
     else if (frame.op === 'key') onKey(frame);
     else if (frame.op === 'redeemed') onRedeemed(frame);
-    else if (frame.op === 'error') $('status').textContent = frame.reason;
+    else if (frame.op === 'error') {
+      if (frame.reason === 'нужно приглашение') createRefused = true;
+      $('status').textContent = frame.reason;
+    }
   };
 
   socket.onclose = () => {

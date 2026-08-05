@@ -1,12 +1,8 @@
 package org.anteroom.invite;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
-import java.util.Base64;
 
-import org.anteroom.room.DeckSpentException;
+import org.anteroom.device.DeviceService;
 import org.anteroom.room.RoomService;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,11 +27,13 @@ public class InviteService {
 
     private final JdbcTemplate jdbc;
     private final RoomService rooms;
+    private final DeviceService devices;
     private final Clock clock;
 
-    public InviteService(JdbcTemplate jdbc, RoomService rooms, Clock clock) {
+    public InviteService(JdbcTemplate jdbc, RoomService rooms, DeviceService devices, Clock clock) {
         this.jdbc = jdbc;
         this.rooms = rooms;
+        this.devices = devices;
         this.clock = clock;
     }
 
@@ -57,7 +55,7 @@ public class InviteService {
      */
     @Transactional
     public Redemption redeem(String token, String pubkeySign) {
-        String tokenHash = hash(token);
+        String tokenHash = InviteHash.of(token);
 
         int spent = jdbc.update("""
                 UPDATE invite SET uses_left = uses_left - 1
@@ -80,12 +78,12 @@ public class InviteService {
             return Redemption.refused();
         }
 
-        try {
+        if (invitation.roomId() == null) {
+            // Инвайт без комнаты — owner-инвайт первого запуска: комнаты ещё нет, сажать
+            // некуда, выдаётся право заводить их.
+            devices.grantInstanceOwnership(pubkeySign);
+        } else {
             rooms.join(invitation.roomId(), pubkeySign, invitation.role(), invitation.issuer());
-        } catch (DeckSpentException e) {
-            // Колода кончилась — комната закрыта навсегда. Попытку не возвращаем: инвайт
-            // всё равно больше никого не приведёт, и держать его смысла нет.
-            throw e;
         }
 
         if (invitation.usesLeft() <= 0) {
@@ -104,15 +102,6 @@ public class InviteService {
     /** Каскадный отзыв — по явной команде, а не автоматом при исключении участника. */
     public void revokeIssuedBy(String roomId, String issuer) {
         jdbc.update("DELETE FROM invite WHERE room_id = ? AND created_by = ?", roomId, issuer);
-    }
-
-    private static String hash(String token) {
-        try {
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(
-                    MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("в этой JVM нет SHA-256", e);
-        }
     }
 
     private record Invitation(String roomId, String role, String issuer, byte[] wrappedKey, int usesLeft) {

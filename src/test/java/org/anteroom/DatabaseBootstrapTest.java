@@ -54,8 +54,10 @@ class DatabaseBootstrapTest {
                 "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name", String.class);
 
         assertThat(tables).contains("room", "device", "member", "member_key", "invite", "message", "onetime");
+        // Номер последней миграции не проверяем — он растёт с каждой новой. Важно, что
+        // ни одна не осталась в базе помеченной как неудачная.
         assertThat(jdbc.queryForObject(
-                "SELECT MAX(version) FROM flyway_schema_history", String.class)).isEqualTo("1");
+                "SELECT count(*) FROM flyway_schema_history WHERE success = 0", Integer.class)).isZero();
     }
 
     @Test

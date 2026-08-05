@@ -99,6 +99,13 @@ public class RoomSocketHandler extends TextWebSocketHandler {
     }
 
     private void create(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        // Подпись говорит «это тот же ключ», а не «его сюда звали». Пропуск на сервер даёт
+        // погашенное приглашение: без него любой, кто открыл адрес, заводил бы здесь
+        // свои комнаты.
+        if (!devices.admitted(device)) {
+            throw new IllegalArgumentException("нужно приглашение");
+        }
+
         String roomId = rooms.create(device,
                 frame.path("defaultTtl").asLong(RoomService.TTL_DEFAULT),
                 frame.path("maxTtl").asLong(RoomService.TTL_CEILING));

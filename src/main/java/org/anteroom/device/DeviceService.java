@@ -42,6 +42,26 @@ public class DeviceService {
         jdbc.update("UPDATE device SET pubkey_box = ? WHERE pubkey_sign = ?", pubkeyBox, pubkeySign);
     }
 
+    /**
+     * Пущено ли устройство на сервер.
+     *
+     * <p>Подпись говорит «это тот же ключ», а не «его сюда звали». Пропуском служит
+     * погашенное приглашение: либо владение сервером, либо участие хотя бы в одной комнате.
+     * Иначе любой, кто открыл адрес, заводил бы на чужом сервере свои комнаты.
+     */
+    public boolean admitted(String pubkeySign) {
+        Integer passes = jdbc.queryForObject(
+                "SELECT (SELECT count(*) FROM instance_owner WHERE pubkey_sign = ?)"
+                        + " + (SELECT count(*) FROM member WHERE pubkey_sign = ? AND left_at IS NULL)",
+                Integer.class, pubkeySign, pubkeySign);
+        return passes != null && passes > 0;
+    }
+
+    public void grantInstanceOwnership(String pubkeySign) {
+        jdbc.update("INSERT OR IGNORE INTO instance_owner (pubkey_sign, granted_at) VALUES (?, ?)",
+                pubkeySign, clock.millis());
+    }
+
     /** Ключи шифрования перечисленных устройств. Устройства без него в карту не попадают. */
     public Map<String, String> encryptionKeys(List<String> pubkeySigns) {
         if (pubkeySigns.isEmpty()) {

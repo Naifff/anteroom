@@ -23,6 +23,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
@@ -50,6 +51,17 @@ class RoomProtocolTest {
     @Autowired
     private SessionRegistry registry;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
+    /**
+     * Пропуск на сервер выдаётся напрямую: как он выдаётся по owner-инвайту, проверяет
+     * {@code OwnerBootstrapTest}, а здесь проверяется протокол комнат.
+     */
+    private void admit(String pubkeySign) {
+        jdbc.update("INSERT OR IGNORE INTO instance_owner (pubkey_sign, granted_at) VALUES (?, 0)", pubkeySign);
+    }
+
     @BeforeAll
     static void startFromEmptyDirectory() throws IOException {
         if (!Files.exists(DATA_DIR)) {
@@ -63,6 +75,17 @@ class RoomProtocolTest {
                     throw new RuntimeException(e);
                 }
             });
+        }
+    }
+
+    @Test
+    void refusesRoomToDeviceNobodyInvited() throws Exception {
+        // Подпись говорит «это тот же ключ», а не «его сюда звали». Иначе любой, кто открыл
+        // адрес, заводит на чужом сервере свои комнаты.
+        try (Client stranger = new Client(false)) {
+            JsonNode answer = stranger.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
         }
     }
 
@@ -403,15 +426,27 @@ class RoomProtocolTest {
         private final WebSocketSession session;
         private final String publicKey;
 
+        /** По умолчанию устройство сразу пущено на сервер: комнаты нужны почти всем тестам. */
         private Client() throws Exception {
-            this(Ed25519Keys.newKeyPair());
+            this(Ed25519Keys.newKeyPair(), true);
         }
 
+        /** Клиент, которого никто не звал. */
+        private Client(boolean admitted) throws Exception {
+            this(Ed25519Keys.newKeyPair(), admitted);
+        }
+
+        /** Реконнект тем же устройством. */
         private Client(KeyPair device) throws Exception {
+            this(device, true);
+        }
+
+        private Client(KeyPair device, boolean admitted) throws Exception {
+            this.publicKey = ENCODER.encodeToString(Ed25519Keys.rawPublicKey(device.getPublic()));
+
             @SuppressWarnings("unchecked")
             Map<String, String> challenge = rest.getForObject("/api/challenge", Map.class);
             String nonce = challenge.get("nonce");
-            this.publicKey = ENCODER.encodeToString(Ed25519Keys.rawPublicKey(device.getPublic()));
             String signature = ENCODER.encodeToString(
                     Ed25519Keys.sign(Base64.getUrlDecoder().decode(nonce), device.getPrivate()));
 
@@ -419,6 +454,12 @@ class RoomProtocolTest {
                     URI.create("ws://localhost:" + port + "/ws?nonce=" + nonce
                             + "&device=" + publicKey + "&signature=" + signature))
                     .get(5, TimeUnit.SECONDS);
+
+            // Только после апгрейда: до него устройства в базе нет, и внешний ключ
+            // instance_owner не даст выдать пропуск несуществующему.
+            if (admitted) {
+                admit(publicKey);
+            }
         }
 
         String publicKey() {
