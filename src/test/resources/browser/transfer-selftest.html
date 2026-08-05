@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Самопроверка переноса по QR</title>
+<style>
+  body { font: 14px/1.6 ui-monospace, monospace; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+  .pass::before { content: "PASS "; color: #14532d; }
+  .fail::before { content: "FAIL "; color: #7f1d1d; }
+  .fail { color: #7f1d1d; }
+  #total { font-weight: bold; margin-bottom: 1rem; }
+  canvas { display: none; }
+</style>
+</head>
+<body>
+<h1>Самопроверка переноса по QR</h1>
+<p>Камера здесь не участвует: QR рисуется в canvas и читается обратно тем же jsQR,
+   которым его будет читать сканер. Непроверенным остаётся только захват кадра.</p>
+<div id="total">выполняется…</div>
+<div id="results"></div>
+<canvas id="scratch"></canvas>
+
+<script src="/vendor/libsodium-sumo.js"></script>
+<script src="/vendor/libsodium-wrappers-sumo.js"></script>
+<script src="/vendor/qrcode-generator.js"></script>
+<script src="/vendor/jsQR.js"></script>
+<script type="module">
+import { packTransfer, unpackTransfer, newTransferCode, TRANSFER_TTL_MS } from '/js/transfer.js';
+import { drawQr, readQr } from '/js/qr.js';
+
+const results = document.getElementById('results');
+let passed = 0;
+let failed = 0;
+
+async function check(name, body) {
+  const row = document.createElement('div');
+  try {
+    await body();
+    row.className = 'pass';
+    row.textContent = name;
+    passed++;
+  } catch (e) {
+    row.className = 'fail';
+    row.textContent = `${name} — ${e.message}`;
+    failed++;
+  }
+  results.append(row);
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function same(a, b) {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
+await sodium.ready;
+
+const NOW = 1785900000000;
+
+await check('код из шести цифр', async () => {
+  for (let i = 0; i < 50; i++) {
+    const code = newTransferCode();
+    assert(/^[0-9]{6}$/.test(code), `выпал «${code}»`);
+  }
+});
+
+await check('коды не повторяются подряд', async () => {
+  const codes = new Set();
+  for (let i = 0; i < 50; i++) codes.add(newTransferCode());
+  assert(codes.size > 40, `из 50 кодов различны только ${codes.size}`);
+});
+
+await check('seed переживает упаковку и распаковку', async () => {
+  const seed = sodium.randombytes_buf(32);
+  const payload = await packTransfer(seed, '123456', NOW);
+  assert(same(await unpackTransfer(payload, '123456', NOW + 1000), seed), 'seed не совпал');
+});
+
+await check('чужой код не открывает перенос', async () => {
+  const payload = await packTransfer(sodium.randombytes_buf(32), '123456', NOW);
+  let rejected = false;
+  try { await unpackTransfer(payload, '654321', NOW + 1000); } catch { rejected = true; }
+  assert(rejected, 'открылось чужим кодом');
+});
+
+await check('протухший перенос отбивается', async () => {
+  // Две минуты - это и есть всё, что защищает шестизначный код от перебора
+  // тем, кто успел снять экран.
+  const payload = await packTransfer(sodium.randombytes_buf(32), '123456', NOW);
+  let rejected = false;
+  try { await unpackTransfer(payload, '123456', NOW + TRANSFER_TTL_MS + 1); } catch { rejected = true; }
+  assert(rejected, 'принят просроченный перенос');
+});
+
+await check('срок годности нельзя подкрутить снаружи', async () => {
+  // Срок лежит открытым, иначе получатель не узнает, что опоздал. Значит он обязан
+  // входить в аутентификацию, иначе его правят в шестнадцатеричном редакторе.
+  const payload = await packTransfer(sodium.randombytes_buf(32), '123456', NOW);
+  payload[3] ^= 0x40;
+  let rejected = false;
+  try { await unpackTransfer(payload, '123456', NOW + 1000); } catch { rejected = true; }
+  assert(rejected, 'принят перенос с правленым сроком');
+});
+
+await check('seed не лежит в переносе открытым', async () => {
+  const seed = sodium.randombytes_buf(32);
+  const payload = await packTransfer(seed, '123456', NOW);
+  assert(!sodium.to_hex(payload).includes(sodium.to_hex(seed)), 'seed виден как есть');
+});
+
+await check('две упаковки одного seed различаются', async () => {
+  const seed = sodium.randombytes_buf(32);
+  const first = await packTransfer(seed, '123456', NOW);
+  const second = await packTransfer(seed, '123456', NOW);
+  assert(!same(first, second), 'упаковки совпали побайтно');
+});
+
+await check('QR читается обратно тем же кодеком', async () => {
+  const seed = sodium.randombytes_buf(32);
+  const payload = await packTransfer(seed, '123456', NOW);
+
+  const canvas = document.getElementById('scratch');
+  drawQr(canvas, payload);
+  const image = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+
+  const decoded = readQr(image);
+  assert(decoded !== null, 'jsQR не нашёл код на картинке');
+  assert(same(decoded, payload), 'декодировалось не то, что кодировалось');
+  assert(same(await unpackTransfer(decoded, '123456', NOW + 1000), seed), 'seed после QR не совпал');
+});
+
+await check('на чистом холсте кода нет', async () => {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 200;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, 200, 200);
+  assert(readQr(context.getImageData(0, 0, 200, 200)) === null, 'нашёлся код на пустом холсте');
+});
+
+document.getElementById('total').textContent =
+  failed === 0 ? `всё сошлось: ${passed}` : `провалено ${failed} из ${passed + failed}`;
+</script>
+</body>
+</html>

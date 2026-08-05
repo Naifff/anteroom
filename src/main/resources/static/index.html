@@ -69,6 +69,12 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 .field::placeholder{color:var(--ink-3)}
 .msgline{margin-top:10px;font-size:12.5px;color:var(--ink-2);line-height:1.4}
 .msgline.bad{color:var(--ember)}
+/* QR всегда чёрным по белому: инверсия под тёмную тему — первая причина, по которой
+   сканер не видит код. Поле вокруг рисует сам генератор. */
+.qr-wrap{margin-top:12px;background:#fff;border-radius:12px;padding:10px;display:flex;justify-content:center}
+.qr-wrap canvas,.qr-wrap video{width:100%;max-width:260px;height:auto;display:block;border-radius:6px}
+.code{font-family:var(--mono);font-size:26px;letter-spacing:.22em;text-align:center;
+  margin-top:12px;color:var(--ink)}
 .hidden{display:none}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -105,6 +111,17 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
     <div class="row">
       <button class="act" id="showWords">Показать 24 слова</button>
       <button class="act" id="saveFile">Скачать key.enc</button>
+      <button class="act" id="showQr">Перенести на устройство</button>
+    </div>
+
+    <div id="qrPanel" class="hidden">
+      <div class="qr-wrap"><canvas id="qrCanvas" aria-label="Код переноса"></canvas></div>
+      <div class="code" id="transferCode"></div>
+      <div class="countdown" id="qrCountdown"></div>
+      <p>На новом устройстве откройте этот же адрес, «Сканировать код», и назовите
+        шесть цифр голосом. В самом коде их нет: снявший экран через плечо без них
+        ничего не откроет.</p>
+      <div class="msgline hidden" id="qrMsg"></div>
     </div>
 
     <div id="wordsPanel" class="hidden">
@@ -131,9 +148,21 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
     <input class="field" id="importPass" type="password" placeholder="Фраза от файла" autocomplete="off">
     <div class="row">
       <button class="act danger" id="doImport">Заменить ключ</button>
+      <button class="act" id="startScan">Сканировать код</button>
       <button class="act" id="closeSheet">Закрыть</button>
     </div>
     <div class="msgline hidden" id="importMsg"></div>
+
+    <div id="scanPanel" class="hidden">
+      <div class="qr-wrap"><video id="scanVideo" playsinline muted></video></div>
+      <div class="msgline" id="scanMsg">наведите камеру на код со старого устройства</div>
+      <input class="field hidden" id="scanCode" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" placeholder="Шесть цифр со старого экрана">
+      <div class="row">
+        <button class="act danger hidden" id="doScanImport">Заменить ключ</button>
+        <button class="act" id="stopScan">Отменить</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -181,10 +210,15 @@ function openSheet() {
 
 function closeSheet() {
   hideWords();
+  // Камера и код переноса гаснут вместе со шторкой: оставить их работать за закрытым
+  // экраном — значит показывать код дольше двух минут и держать камеру включённой.
+  stopQr();
+  stopScan();
   $('sheet').classList.add('hidden');
   $('backdrop').classList.add('hidden');
   $('wordsPanel').classList.add('hidden');
   $('filePanel').classList.add('hidden');
+  $('qrPanel').classList.add('hidden');
   $('passphrase').value = '';
   $('importPass').value = '';
   $('importWords').value = '';
@@ -280,6 +314,187 @@ $('doSaveFile').addEventListener('click', async () => {
     message.textContent = `не зашифровалось: ${e.message}`;
   } finally {
     $('doSaveFile').disabled = false;
+  }
+});
+
+/* ---------- перенос на устройство ---------- */
+
+// Генератор и сканер вместе весят под треть мегабайта. Большинство ключ не переносит
+// никогда, поэтому подтягиваются по нажатию, а не в общей загрузке страницы.
+const loaded = new Map();
+function loadScript(src) {
+  if (!loaded.has(src)) {
+    loaded.set(src, new Promise((resolve, reject) => {
+      const tag = document.createElement('script');
+      tag.src = src;
+      tag.onload = resolve;
+      tag.onerror = () => reject(new Error(`не загрузился ${src}`));
+      document.head.append(tag);
+    }));
+  }
+  return loaded.get(src);
+}
+
+let qrTimer = null;
+let qrTick = null;
+
+function stopQr() {
+  clearTimeout(qrTimer);
+  clearInterval(qrTick);
+  const canvas = $('qrCanvas');
+  canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+  canvas.width = canvas.height = 0;
+  $('transferCode').textContent = '';
+  $('qrCountdown').textContent = '';
+  $('showQr').textContent = 'Перенести на устройство';
+}
+
+$('showQr').addEventListener('click', async () => {
+  if ($('transferCode').textContent) {
+    stopQr();
+    $('qrPanel').classList.add('hidden');
+    return;
+  }
+
+  const message = $('qrMsg');
+  message.classList.remove('hidden', 'bad');
+  message.textContent = 'готовлю код…';
+  $('qrPanel').classList.remove('hidden');
+
+  try {
+    await loadScript('/vendor/qrcode-generator.js');
+    const { packTransfer, newTransferCode, TRANSFER_TTL_MS } = await import('/js/transfer.js');
+    const { drawQr } = await import('/js/qr.js');
+
+    const code = newTransferCode();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const payload = await packTransfer(seed, code, Date.now());
+
+    drawQr($('qrCanvas'), payload);
+    $('transferCode').textContent = code.replace(/(\d{3})(\d{3})/, '$1 $2');
+    $('showQr').textContent = 'Убрать код';
+    message.classList.add('hidden');
+
+    // Две минуты — половина защиты шестизначного кода, поэтому срок гасит картинку
+    // сам, без участия человека.
+    let left = Math.round(TRANSFER_TTL_MS / 1000);
+    $('qrCountdown').textContent = `код погаснет через ${left} с`;
+    qrTick = setInterval(() => {
+      left -= 1;
+      $('qrCountdown').textContent = `код погаснет через ${left} с`;
+    }, 1000);
+    qrTimer = setTimeout(() => {
+      stopQr();
+      message.classList.remove('hidden');
+      message.textContent = 'код погас, нажмите ещё раз для нового';
+    }, TRANSFER_TTL_MS);
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = e.message;
+  }
+});
+
+/* ---------- сканирование ---------- */
+
+let camera = null;
+let scanning = false;
+let scannedPayload = null;
+
+function stopScan() {
+  scanning = false;
+  // Треки гасятся явно: иначе камера остаётся включённой с горящим индикатором,
+  // даже когда шторка закрыта.
+  camera?.getTracks().forEach((track) => track.stop());
+  camera = null;
+  $('scanVideo').srcObject = null;
+  $('scanPanel').classList.add('hidden');
+  $('scanCode').value = '';
+  $('scanCode').classList.add('hidden');
+  $('doScanImport').classList.add('hidden');
+  scannedPayload = null;
+}
+
+$('stopScan').addEventListener('click', stopScan);
+
+$('startScan').addEventListener('click', async () => {
+  $('scanPanel').classList.remove('hidden');
+  const message = $('scanMsg');
+  message.classList.remove('bad');
+  message.textContent = 'запрашиваю камеру…';
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    message.classList.add('bad');
+    message.textContent = 'камера недоступна: нужен https или localhost';
+    return;
+  }
+
+  try {
+    await loadScript('/vendor/jsQR.js');
+    const { readQr } = await import('/js/qr.js');
+
+    camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const video = $('scanVideo');
+    video.srcObject = camera;
+    await video.play();
+    message.textContent = 'наведите камеру на код со старого устройства';
+
+    const frame = document.createElement('canvas');
+    const context = frame.getContext('2d', { willReadFrequently: true });
+    scanning = true;
+
+    const tick = () => {
+      if (!scanning) return;
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        frame.width = video.videoWidth;
+        frame.height = video.videoHeight;
+        context.drawImage(video, 0, 0, frame.width, frame.height);
+
+        const found = readQr(context.getImageData(0, 0, frame.width, frame.height));
+        if (found) {
+          scanning = false;
+          scannedPayload = found;
+          camera?.getTracks().forEach((track) => track.stop());
+          camera = null;
+          video.srcObject = null;
+          // Снять «плохой» класс обязательно: иначе успех рисуется акцентным цветом,
+          // оставшимся от прошлой ошибки, а он зарезервирован под необратимое.
+          message.classList.remove('bad');
+          message.textContent = 'код найден. назовите шесть цифр со старого экрана';
+          $('scanCode').classList.remove('hidden');
+          $('doScanImport').classList.remove('hidden');
+          $('scanCode').focus();
+          return;
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = `камера не открылась: ${e.message}`;
+  }
+});
+
+$('doScanImport').addEventListener('click', async () => {
+  const message = $('scanMsg');
+  message.classList.remove('bad');
+  message.textContent = 'проверяю код…';
+
+  try {
+    const { unpackTransfer } = await import('/js/transfer.js');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const restored = await unpackTransfer(scannedPayload, $('scanCode').value.trim(), Date.now());
+
+    await saveSeed(restored);
+    seed = restored;
+    keys = keysFromSeed(seed);
+    showIdentity();
+
+    stopScan();
+    closeSheet();
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = e.message;
   }
 });
 
