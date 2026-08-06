@@ -1,0 +1,36 @@
+[Unit]
+Description=Anteroom
+Documentation=https://github.com/Naifff/anteroom
+After=network.target
+
+[Service]
+User=messenger
+Group=messenger
+ExecStart=/usr/bin/java -jar /opt/messenger/messenger.jar --app.data-dir=/var/lib/messenger
+Restart=on-failure
+RestartSec=5
+
+# Останов не мгновенный: приложение доигрывает начатые запросы, потолок задан
+# в application.yml (timeout-per-shutdown-phase). Дать systemd меньше — значит
+# ловить оборванные загрузки при каждом перезапуске.
+TimeoutStopSec=30
+
+# Журнал уходит в journald. Отпечаток бандла печатается при старте — по нему
+# сверяют, что развёрнуто именно то, что скачано:
+#   journalctl -u messenger | grep 'Отпечаток бандла'
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Единственный каталог, куда сервису нужно писать. Здесь же лежит server.key
+# с правами 600 — при более открытых сервер откажется стартовать.
+ReadWritePaths=/var/lib/messenger
+
+[Install]
+WantedBy=multi-user.target

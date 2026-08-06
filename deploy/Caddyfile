@@ -1,0 +1,32 @@
+# TLS автоматический: Let's Encrypt заводится сам, в Java его не тащим.
+#
+# Журнал доступа настроен так, чтобы не стать тем, чего в этой системе быть не должно.
+chat.example.org {
+	reverse_proxy localhost:8080
+
+	log {
+		output file /var/log/caddy/anteroom.log
+		format filter {
+			wrap json
+
+			fields {
+				# Query-строка вырезается целиком. Секретов в ней нет по устройству
+				# системы — они живут во фрагменте URL и до сервера не доходят, — но
+				# вызов входа, ключ устройства и подпись в ней есть, и складывать их
+				# на диск незачем.
+				request>uri regexp "\?.*" ""
+
+				# Адрес обрезается до подсети. Rate-limiter'у в приложении полный адрес
+				# нужен, журналу — нет: полный адрес в файле на диске это уже история
+				# соединений конкретного человека.
+				request>remote_ip ip_mask {
+					ipv4 24
+					ipv6 48
+				}
+
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+			}
+		}
+	}
+}

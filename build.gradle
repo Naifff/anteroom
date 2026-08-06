@@ -41,6 +41,38 @@ dependencies {
 // README документирует /opt/messenger/messenger.jar — имя артефакта держим тем же.
 bootJar {
     archiveFileName = 'messenger.jar'
+
+    // Без этого в архив попадают время сборки и порядок файловой системы, и два
+    // прогона на одних исходниках дают разные хэши. Публиковать такой хэш можно,
+    // но проверить по нему нечего, кроме «файл не бился при скачивании».
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+/**
+ * Контрольная сумма релиза. Именно этот jar раздаёт браузерам код, который шифрует
+ * переписку, — поэтому админ должен уметь сверить скачанное с опубликованным.
+ *
+ * Отпечаток самого бандла считается иначе и печатается сервером при старте: в jar
+ * лежат ещё классы и зависимости, и его хэш меняется от вещей, к раздаваемому коду
+ * отношения не имеющих.
+ */
+tasks.register('releaseHashes') {
+    dependsOn 'bootJar'
+    def jar = layout.buildDirectory.file('libs/messenger.jar')
+    def sums = layout.buildDirectory.file('libs/SHA256SUMS')
+    inputs.file(jar)
+    outputs.file(sums)
+
+    doLast {
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        jar.get().asFile.eachByte(64 * 1024) { buffer, read -> digest.update(buffer, 0, read) }
+        def hex = digest.digest().encodeHex().toString()
+
+        sums.get().asFile.text = "${hex}  messenger.jar\n"
+        logger.lifecycle("sha256:${hex}  messenger.jar")
+        logger.lifecycle('Отпечаток бандла сервер печатает при старте — его в релизные заметки берут оттуда.')
+    }
 }
 
 test {

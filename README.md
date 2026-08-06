@@ -44,37 +44,18 @@ sudo cp messenger.jar /opt/messenger/
 sudo chown -R messenger:messenger /var/lib/messenger
 ```
 
-`/etc/systemd/system/messenger.service`:
+Готовые файлы лежат в каталоге `deploy/` — их не нужно набирать заново:
 
-```ini
-[Unit]
-Description=Messenger
-After=network.target
-
-[Service]
-User=messenger
-ExecStart=/usr/bin/java -jar /opt/messenger/messenger.jar --app.data-dir=/var/lib/messenger
-Restart=on-failure
-RestartSec=5
-NoNewPrivileges=true
-ProtectSystem=strict
-ReadWritePaths=/var/lib/messenger
-
-[Install]
-WantedBy=multi-user.target
+```bash
+sudo cp deploy/messenger.service /etc/systemd/system/
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile   # поправьте домен
+sudo cp deploy/backup.sh /usr/local/bin/messenger-backup
 ```
 
-`Caddyfile`:
-
-```
-chat.example.org {
-    reverse_proxy localhost:8080
-    log {
-        output file /var/log/caddy/access.log
-        format json
-    }
-}
-```
+В `Caddyfile` журнал доступа настроен так, чтобы не стать историей соединений: query-строка
+вырезается целиком, адрес обрезается до подсети. Секретов в query нет по устройству системы —
+они живут во фрагменте URL и до сервера не доходят, — но вызов входа, ключ устройства и
+подпись там есть, и складывать их на диск незачем.
 
 Запуск:
 
@@ -150,6 +131,23 @@ https://chat.example.org/join#hT9x...QaZ.k4Vb...9Lm
 
 Сервер откажется стартовать, если у `server.key` слишком открытые права. Это не придирка:
 подмена этого ключа позволяет выдавать себя за сервер при входе.
+
+---
+
+## Контейнеры
+
+Способ для тех, у кого уже есть окружение с контейнерами. Основной путь — systemd выше.
+
+```bash
+docker compose up -d --build
+```
+
+`docker-compose.yml` поднимает приложение и Caddy перед ним. Данные лежат в именованном томе
+`messenger-data`, наружу приложение не публикуется — TLS завершает Caddy.
+
+**Контейнер прячет каталог данных за томом, и про резервные копии легко забыть.** Копировать
+нужно именно его: там ключ сервера, база и вложения. Внутри контейнера это тот же
+`/var/lib/messenger`, и `deploy/backup.sh` работает и там.
 
 ---
 
@@ -339,13 +337,11 @@ https://chat.example.org/join#hT9x...QaZ.k4Vb...9Lm
 Копировать нужно весь каталог данных. База на живом сервере копируется только через `.backup`
 — обычный `cp` даст повреждённый файл.
 
+Готовый скрипт — `deploy/backup.sh`. По расписанию:
+
 ```bash
-#!/bin/sh
-D=/var/backup/messenger/$(date +%F)
-mkdir -p "$D"
-sqlite3 /var/lib/messenger/messenger.db ".backup '$D/messenger.db'"
-cp -a /var/lib/messenger/blobs "$D/"
-cp -a /var/lib/messenger/server.key "$D/"
+sudo cp deploy/backup.sh /usr/local/bin/messenger-backup
+echo '15 4 * * * /usr/local/bin/messenger-backup' | sudo crontab -
 ```
 
 **Копия содержит `server.key` — храните её так же, как сам сервер.**
@@ -369,6 +365,27 @@ sudo systemctl start messenger
 
 Сверьте контрольную сумму скачанного файла с опубликованной для релиза. Именно этот jar
 раздаёт браузерам код, который шифрует переписку.
+
+```bash
+shasum -a 256 -c SHA256SUMS
+```
+
+Сборка воспроизводима: два прогона на одних исходниках дают побайтно одинаковый jar,
+поэтому сумму можно не принимать на веру, а получить самому из тех же исходников.
+
+### Отпечаток бандла
+
+Контрольная сумма jar говорит, что файл не подменили при скачивании. Отпечаток бандла
+отвечает на другой вопрос: тот ли код сервер раздаёт браузерам прямо сейчас. Он печатается
+при каждом старте:
+
+```bash
+journalctl -u messenger | grep 'Отпечаток бандла'
+```
+
+Сверьте его с опубликованным в релизных заметках. Считается он по всему, что уходит в
+браузер, — разметке, модулям и вендоренной крипте, — а не по jar целиком: в jar лежат ещё
+классы и зависимости, и его сумма меняется от вещей, к раздаваемому коду отношения не имеющих.
 
 ---
 
@@ -412,6 +429,10 @@ Spring Boot, один процесс. WebSocket для сообщений, об�
 ## Сборка
 
 ```bash
-./gradlew bootJar    # build/libs/messenger.jar
+./gradlew bootJar         # build/libs/messenger.jar
 ./gradlew test
+./gradlew releaseHashes   # build/libs/SHA256SUMS
 ```
+
+Java 21 фиксирована toolchain'ом: системный `JAVA_HOME` на сборку не влияет, и собранный
+у вас jar совпадёт с собранным у нас.
