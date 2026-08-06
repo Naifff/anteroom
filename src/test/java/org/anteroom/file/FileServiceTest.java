@@ -178,7 +178,7 @@ class FileServiceTest {
         fillRoom(OTHER_ROOM, ROOM_QUOTA);
 
         jdbc.update("INSERT INTO room (id, created_at) VALUES ('room-c', 0)");
-        Room third = new Room("room-c", 1, 3600, 3600, 1, 0);
+        Room third = new Room("room-c", 1, 3600, 3600, 1, true, 0);
 
         assertThatThrownBy(() -> files.issue(third, DEVICE, 1, null))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -338,7 +338,7 @@ class FileServiceTest {
     }
 
     private static Room roomWithTtl(long ttl) {
-        return new Room(ROOM, 1, ttl, ttl, 1, 0);
+        return new Room(ROOM, 1, ttl, ttl, 1, true, 0);
     }
 
     private void fillRoom(String roomId, long bytes) {

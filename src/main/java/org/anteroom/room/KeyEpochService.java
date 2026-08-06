@@ -1,6 +1,8 @@
 package org.anteroom.room;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -38,6 +40,33 @@ public class KeyEpochService {
                  WHERE room_id = ? AND pubkey_sign = ? AND epoch = ?
                 """,
                 rs -> rs.next() ? rs.getBytes(1) : null, roomId, pubkeySign, epoch);
+    }
+
+    /**
+     * Публикует ключ личной переписки на эпоху.
+     *
+     * <p>Отдельно от {@code member_key}: обёртку ключа комнаты кладёт другой участник,
+     * а этот ключ человек объявляет сам, и порядок этих двух событий не задан.
+     *
+     * <p>Ключ свой на каждую эпоху не для красоты: X25519 устройства живёт вечно, и его
+     * утечка раскрыла бы всю личную переписку задним числом — ротации ключа комнаты
+     * долгоживущий ключ не подчиняется.
+     */
+    public void storeDmKey(String roomId, String pubkeySign, int epoch, String pubkeyDm) {
+        jdbc.update("""
+                INSERT INTO dm_key (room_id, pubkey_sign, epoch, pubkey_dm) VALUES (?, ?, ?, ?)
+                ON CONFLICT (room_id, pubkey_sign, epoch) DO UPDATE SET pubkey_dm = excluded.pubkey_dm
+                """, roomId, pubkeySign, epoch, pubkeyDm);
+    }
+
+    /** Ключи переписки этой эпохи: устройство — ключ. Кого нет, тому написать нельзя. */
+    public Map<String, String> dmKeys(String roomId, int epoch) {
+        Map<String, String> keys = new HashMap<>();
+        jdbc.query("SELECT pubkey_sign, pubkey_dm FROM dm_key WHERE room_id = ? AND epoch = ?",
+                rs -> {
+                    keys.put(rs.getString("pubkey_sign"), rs.getString("pubkey_dm"));
+                }, roomId, epoch);
+        return keys;
     }
 
     /**

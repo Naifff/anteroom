@@ -3,6 +3,7 @@ package org.anteroom.ttl;
 import java.time.Clock;
 
 import org.anteroom.file.FileService;
+import org.anteroom.message.DirectService;
 import org.anteroom.message.MessageService;
 import org.anteroom.message.OneTimeService;
 import org.slf4j.Logger;
@@ -34,14 +35,16 @@ public class SweeperJob {
     private final MessageService messages;
     private final FileService files;
     private final OneTimeService onetime;
+    private final DirectService direct;
     private final JdbcTemplate jdbc;
     private final Clock clock;
 
     public SweeperJob(MessageService messages, FileService files, OneTimeService onetime,
-                      JdbcTemplate jdbc, Clock clock) {
+                      DirectService direct, JdbcTemplate jdbc, Clock clock) {
         this.messages = messages;
         this.files = files;
         this.onetime = onetime;
+        this.direct = direct;
         this.jdbc = jdbc;
         this.clock = clock;
     }
@@ -56,6 +59,7 @@ public class SweeperJob {
         // «сначала блоб, потом строка» держится там.
         deleted += files.sweepExpired();
         deleted += onetime.sweepExpired();
+        deleted += direct.sweepExpired();
         // Исчерпанные инвайты уходят вместе с протухшими: пока строка жива, она держит
         // wrapped_key, и сохранённая кем-то ссылка остаётся заряженной.
         deleted += jdbc.update("DELETE FROM invite WHERE expires_at <= ? OR uses_left <= 0", now);

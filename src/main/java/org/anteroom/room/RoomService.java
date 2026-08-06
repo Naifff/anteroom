@@ -36,7 +36,7 @@ public class RoomService {
     }
 
     @Transactional
-    public String create(String ownerPubkey, long defaultTtl, long maxTtl) {
+    public String create(String ownerPubkey, long defaultTtl, long maxTtl, boolean directAllowed) {
         if (maxTtl < TTL_FLOOR || defaultTtl < TTL_FLOOR) {
             throw new IllegalArgumentException("срок жизни меньше " + TTL_FLOOR + " секунд бессмыслен");
         }
@@ -48,10 +48,12 @@ public class RoomService {
         random.nextBytes(raw);
         String roomId = Base64.getUrlEncoder().withoutPadding().encodeToString(raw);
 
+        // Настройка решается при создании и потом не меняется: участники, вошедшие под
+        // обещание «здесь личного нет», узнали бы об изменении последними.
         jdbc.update("""
-                INSERT INTO room (id, key_epoch, default_ttl, max_ttl, seats_taken, created_at)
-                VALUES (?, 1, ?, ?, 0, ?)
-                """, roomId, fallback, ceiling, clock.millis());
+                INSERT INTO room (id, key_epoch, default_ttl, max_ttl, seats_taken, direct_allowed, created_at)
+                VALUES (?, 1, ?, ?, 0, ?, ?)
+                """, roomId, fallback, ceiling, directAllowed, clock.millis());
 
         join(roomId, ownerPubkey, "owner", null);
         return roomId;
@@ -99,7 +101,8 @@ public class RoomService {
 
     public Room find(String roomId) {
         return jdbc.queryForObject("""
-                SELECT id, key_epoch, default_ttl, max_ttl, seats_taken, created_at FROM room WHERE id = ?
+                SELECT id, key_epoch, default_ttl, max_ttl, seats_taken, direct_allowed, created_at
+                  FROM room WHERE id = ?
                 """,
                 (rs, rowNum) -> new Room(
                         rs.getString("id"),
@@ -107,6 +110,7 @@ public class RoomService {
                         rs.getLong("default_ttl"),
                         rs.getLong("max_ttl"),
                         rs.getInt("seats_taken"),
+                        rs.getBoolean("direct_allowed"),
                         rs.getLong("created_at")),
                 roomId);
     }

@@ -167,7 +167,7 @@ class OneTimeServiceTest {
     }
 
     private static Room room(long ttl) {
-        return new Room(ROOM, 1, ttl, ttl, 1, 0);
+        return new Room(ROOM, 1, ttl, ttl, 1, true, 0);
     }
 
     private static final class MutableClock extends Clock {

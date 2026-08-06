@@ -131,6 +131,6 @@ class OnceEndpointTest {
     }
 
     private static Room room() {
-        return new Room(ROOM, 1, 3600, 3600, 1, 0);
+        return new Room(ROOM, 1, 3600, 3600, 1, true, 0);
     }
 }

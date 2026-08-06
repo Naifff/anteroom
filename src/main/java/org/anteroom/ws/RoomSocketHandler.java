@@ -10,8 +10,10 @@ import org.anteroom.file.FileTooLargeException;
 import org.anteroom.file.Upload;
 import org.anteroom.invite.InviteService;
 import org.anteroom.invite.Redemption;
+import org.anteroom.message.DirectService;
 import org.anteroom.message.MessageService;
 import org.anteroom.message.OneTimeService;
+import org.anteroom.message.StoredDirect;
 import org.anteroom.message.StoredMessage;
 import org.anteroom.room.DeckSpentException;
 import org.anteroom.room.KeyEpochService;
@@ -57,11 +59,12 @@ public class RoomSocketHandler extends TextWebSocketHandler {
     private final InviteService invites;
     private final FileService files;
     private final OneTimeService onetime;
+    private final DirectService direct;
     private final ObjectMapper json = new ObjectMapper();
 
     public RoomSocketHandler(SessionRegistry registry, MessageService messages, RoomService rooms,
                              KeyEpochService epochs, DeviceService devices, InviteService invites,
-                             FileService files, OneTimeService onetime) {
+                             FileService files, OneTimeService onetime, DirectService direct) {
         this.registry = registry;
         this.messages = messages;
         this.rooms = rooms;
@@ -70,6 +73,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         this.invites = invites;
         this.files = files;
         this.onetime = onetime;
+        this.direct = direct;
     }
 
     @Override
@@ -97,6 +101,8 @@ public class RoomSocketHandler extends TextWebSocketHandler {
                 case "wrap" -> wrap(session, device, frame);
                 case "upload" -> upload(session, device, frame);
                 case "once" -> once(session, device, frame);
+                case "dm-key" -> dmKey(session, device, frame);
+                case "dm" -> dm(session, device, frame);
                 case "send" -> send(session, device, frame);
                 default -> fail(session, "неизвестная операция");
             }
@@ -121,7 +127,10 @@ public class RoomSocketHandler extends TextWebSocketHandler {
 
         String roomId = rooms.create(device,
                 frame.path("defaultTtl").asLong(RoomService.TTL_DEFAULT),
-                frame.path("maxTtl").asLong(RoomService.TTL_CEILING));
+                frame.path("maxTtl").asLong(RoomService.TTL_CEILING),
+                // Молчание клиента — личные разрешены: запрет это осознанный выбор,
+                // а не то, что случается по недосмотру.
+                frame.path("directAllowed").asBoolean(true));
         sendRoom(session, device, roomId);
     }
 
@@ -206,6 +215,11 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         for (StoredMessage stored : messages.since(roomId, frame.path("since").asLong())) {
             send(session, roomId, stored);
         }
+        // Личные догружаются отдельным счётчиком: их id живут в своей таблице и с общей
+        // лентой не пересекаются.
+        for (StoredDirect stored : direct.since(roomId, frame.path("sinceDirect").asLong())) {
+            sendDirect(session, roomId, stored);
+        }
     }
 
     private void key(WebSocketSession session, String device, JsonNode frame) throws IOException {
@@ -275,6 +289,58 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         write(session, answer);
     }
 
+    /** Ключ личной переписки на эпоху. Публикует его владелец ключа и только он. */
+    private void dmKey(WebSocketSession session, String device, JsonNode frame) {
+        String roomId = frame.path("room").asText();
+        requireMember(roomId, device);
+
+        epochs.storeDmKey(roomId, device, frame.path("epoch").asInt(), frame.path("key").asText());
+
+        // Состав уходит заново: без этого остальные узнают о новом ключе переписки только
+        // при следующем входе, а до тех пор написать этому человеку нечем.
+        announceRoster(roomId, session);
+    }
+
+    /**
+     * Личное сообщение.
+     *
+     * <p>Уходит всей комнате, а не получателю: кому адресовано, сервер не знает. Он видит
+     * 52 слота одинаковой длины и проверяет только форму — что их ровно 52 и что все одной
+     * длины. Заглянуть внутрь он не может, и в этом весь смысл.
+     */
+    private void dm(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        String roomId = frame.path("room").asText();
+        requireMember(roomId, device);
+
+        byte[] ciphertext = Base64.getDecoder().decode(frame.path("ciphertext").asText());
+        byte[] envelopes = Base64.getDecoder().decode(frame.path("envelopes").asText());
+        Long requested = frame.hasNonNull("ttl") ? frame.get("ttl").asLong() : null;
+
+        StoredDirect saved = direct.save(rooms.find(roomId), ciphertext, envelopes, requested);
+
+        for (WebSocketSession listener : registry.sessions(roomId)) {
+            try {
+                sendDirect(listener, roomId, saved);
+            } catch (IOException e) {
+                log.debug("Личный кадр не ушёл, сессия снимается: {}", e.toString());
+                registry.unregister(roomId, listener);
+            }
+        }
+    }
+
+    private void sendDirect(WebSocketSession session, String roomId, StoredDirect message) throws IOException {
+        ObjectNode frame = json.createObjectNode();
+        frame.put("op", "direct");
+        frame.put("room", roomId);
+        frame.put("id", message.id());
+        // Ни отправителя, ни получателя: первый подписан внутри шифротекста, второго
+        // не существует нигде — он определяется тем, чей слот развернулся.
+        frame.put("expiresAt", message.expiresAt());
+        frame.put("ciphertext", Base64.getEncoder().encodeToString(message.ciphertext()));
+        frame.put("envelopes", Base64.getEncoder().encodeToString(message.envelopes()));
+        write(session, frame);
+    }
+
     private void send(WebSocketSession session, String device, JsonNode frame) throws IOException {
         String roomId = frame.path("room").asText();
         requireMember(roomId, device);
@@ -310,6 +376,13 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         answer.put("role", rooms.role(roomId, device));
         answer.put("seatsTaken", room.seatsTaken());
         answer.put("deckSpent", room.deckSpent());
+        // Настройка комнаты, не право участника: где личное выключено, вкладки быть
+        // не должно вовсе — предлагать действие, которое сервер отклонит, нечестно.
+        answer.put("directAllowed", room.directAllowed());
+
+        // Ключи переписки этой эпохи: без чужого ключа конверт не собрать, а без него
+        // человеку нельзя написать лично.
+        var dmKeys = epochs.dmKeys(roomId, room.keyEpoch());
 
         ArrayNode seats = answer.putArray("members");
         for (Member member : members) {
@@ -317,6 +390,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
             seat.put("device", member.pubkeySign());
             seat.put("card", member.card());
             seat.put("box", boxes.get(member.pubkeySign()));
+            seat.put("dm", dmKeys.get(member.pubkeySign()));
         }
 
         // Кому обёртки текущей эпохи ещё не положили. Раздать их может любой, у кого ключ

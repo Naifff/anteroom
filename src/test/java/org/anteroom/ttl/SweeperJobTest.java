@@ -123,6 +123,20 @@ class SweeperJobTest {
     }
 
     @Test
+    void sweepsExpiredDirectMessages() {
+        for (long deadline : new long[] { PAST, FUTURE }) {
+            jdbc.update("""
+                    INSERT INTO direct (room_id, ciphertext, envelopes, created_at, expires_at)
+                    VALUES ('room-a', x'01', x'02', 0, ?)
+                    """, deadline);
+        }
+
+        sweeper.sweep();
+
+        assertThat(count("direct")).isEqualTo(1);
+    }
+
+    @Test
     void sweepsExpiredFileWithItsBlob() throws IOException {
         // Порядок обязателен: сначала блоб, потом строка. Обратный оставляет на диске
         // вечный мусор, о котором больше никто не знает.

@@ -6,7 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Состояние репозитория
 
-**Сделаны фазы 0–9, регистрация закрыта.** Следующая работа — **фаза 10, личные сообщения**.
+**Сделаны фазы 0–10, регистрация закрыта.** Следующая работа — **фаза 11, модерация
+и анти-абьюз**.
 
 Пропуск на сервер даёт погашенное приглашение, а не подпись: подпись говорит «это тот же
 ключ», а не «его сюда звали». Owner-инвайт печатается в журнал при первом старте, один раз
@@ -33,6 +34,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   от SPA: открывающий может быть посторонним, заводить ему личность устройства незачем.
   Сжигание — `POST /api/once` с токеном **в теле**; GET только показывает предупреждение,
   иначе превью-боты сожгли бы ссылку до человека.
+- **Личные сообщения.** Рассылка на всю колоду: 52 слота по 80 байт, настоящих два —
+  получателю и себе. Ключ переписки выводится из seed на пару «комната + эпоха», лежит
+  в `dm_key`. Подпись отправителя внутри шифротекста, снаружи ни его, ни получателя нет.
+  Файлов в личных нет: блоб один, и сервер видит, кто его качает.
 
 Формат сообщения — конверт с версией: `{v: 1, t: 'text'|'file', …}`. **Не выпускать формат
 без поля версии**: без него смена криптосхемы ломает всё отправленное, и миграцию некуда
@@ -55,6 +60,7 @@ Ed25519 на сервере — штатный из JDK (`java.security`, с 15-
 - `export-selftest.html` — 24 слова по векторам BIP-39 и `key.enc`
 - `transfer-selftest.html` — перенос по QR
 - `attach-selftest.html` — шифрование/расшифровка файлов (хранилище ключа не трогает)
+- `direct-selftest.html` — конверты личных сообщений (хранилище ключа не трогает)
 
 Известный зазор: `ApplicationReadyEvent` срабатывает после открытия порта, поэтому
 «чистит базу до раздачи трафика» выполняется не буквально. Наружу протухшее всё равно
@@ -324,11 +330,11 @@ src/main/java/…/
   auth/          ChallengeService, ServerKeyStore, Ed25519Keys
   room/          RoomService, MemberService, KeyEpochService, CardDealer
   invite/        InviteService (создание, погашение, каскадный отзыв)
-  message/       MessageService, OneTimeService, OnceController
+  message/       MessageService, OneTimeService, OnceController, DirectService
   file/          FileService, FileController, BlobStore, Upload (фаза 8)
   ttl/           SweeperJob
 src/main/resources/
-  db/migration/  V1__init.sql, V2__…, V3__files.sql
+  db/migration/  V1__init.sql, V2__…, V3__files.sql, V4__direct.sql
   static/        SPA, once.html (страница записки), libsodium-sumo (вендорится локально)
 src/test/resources/
   browser/       селф-тесты на JS (в jar не попадают, bootRun раздаёт их по /browser/)
@@ -344,6 +350,7 @@ data/            server.key, messenger.db, blobs/  (монтируется то�
 ./gradlew test --tests '*DatabaseBootstrapTest*'   # один тест
 ./gradlew test --tests '*SweeperJobTest*'   # тесты TTL-уборки
 ./gradlew test --tests '*FileServiceTest*'  # тесты файлов (фаза 8)
+./gradlew test --tests '*DirectServiceTest*' # тесты личных сообщений (фаза 10)
 java -jar build/libs/messenger.jar --app.data-dir=/var/lib/messenger --server.port=18080
 ```
 
@@ -361,6 +368,7 @@ JS-тесты браузером. Страницы про личность ст�
 ```bash
 ./gradlew bootRun                                  # раздаёт и /browser/, и статику
 open http://localhost:8080/browser/attach-selftest.html
+open http://localhost:8080/browser/direct-selftest.html
 open http://localhost:8080/browser/export-selftest.html
 open http://localhost:8080/browser/identity-selftest.html
 open http://localhost:8080/browser/transfer-selftest.html

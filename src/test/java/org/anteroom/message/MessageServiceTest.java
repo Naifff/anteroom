@@ -127,11 +127,11 @@ class MessageServiceTest {
     }
 
     private static Room room(long defaultTtl, long maxTtl) {
-        return new Room(ROOM, 1, defaultTtl, maxTtl, 1, 0);
+        return new Room(ROOM, 1, defaultTtl, maxTtl, 1, true, 0);
     }
 
     private static Room otherRoom() {
-        return new Room(OTHER_ROOM, 1, 60, 60, 1, 0);
+        return new Room(OTHER_ROOM, 1, 60, 60, 1, true, 0);
     }
 
     @Test

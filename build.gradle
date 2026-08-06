@@ -59,4 +59,9 @@ bootRun {
     dependsOn 'stageBrowserTests'
     systemProperty 'spring.web.resources.static-locations',
             'classpath:/static/,file:' + layout.buildDirectory.dir('browser-tests').get().asFile.path + '/'
+    // Без этого браузер держит прежний /js/*.js даже после перезагрузки страницы с другим
+    // запросом: модули кэшируются по своему URL, а он не менялся. Проверяешь при этом
+    // прошлую сборку и списываешь расхождение на что угодно, кроме кэша.
+    // Только для bootRun: в бою кэш статики нужен, и хэш релиза от него не страдает.
+    systemProperty 'spring.web.resources.cache.cachecontrol.no-store', 'true'
 }

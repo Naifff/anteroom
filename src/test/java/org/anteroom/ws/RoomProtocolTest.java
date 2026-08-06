@@ -260,6 +260,141 @@ class RoomProtocolTest {
     }
 
     @Test
+    void carriesDirectMessageToEveryMemberOfTheRoom() throws Exception {
+        // Рассылка идёт всем, а не получателю: кому именно адресовано, сервер не знает
+        // и знать не должен. Разбирается с этим клиент, разворачивая только свой слот.
+        try (Client owner = new Client(); Client guest = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            inviteAndRedeem(owner, roomId, "для-гостя", guest);
+
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            guest.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+            guest.drain();
+
+            String envelopes = envelopes();
+            owner.send("{\"op\":\"dm\",\"room\":\"" + roomId + "\",\"ciphertext\":\"0JvQuNGH0L3QvtC1\""
+                    + ",\"envelopes\":\"" + envelopes + "\"}");
+
+            JsonNode delivered = guest.awaitOp("direct");
+            assertThat(delivered.get("ciphertext").asText()).isEqualTo("0JvQuNGH0L3QvtC1");
+            assertThat(delivered.get("envelopes").asText()).isEqualTo(envelopes);
+            assertThat(delivered.has("sender")).as("отправителя в кадре нет").isFalse();
+            assertThat(delivered.has("recipient")).as("получателя в кадре нет").isFalse();
+            assertThat(delivered.get("expiresAt").asLong()).isGreaterThan(System.currentTimeMillis());
+        }
+    }
+
+    @Test
+    void refusesDirectMessageWithIncompleteDeck() throws Exception {
+        try (Client owner = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+
+            assertThat(owner.request("{\"op\":\"dm\",\"room\":\"" + roomId
+                    + "\",\"ciphertext\":\"AQID\",\"envelopes\":\"" + envelopes() + "\"}")
+                    .get("op").asText())
+                    .as("полная колода принимается — значит отказ ниже про число слотов")
+                    .isEqualTo("direct");
+
+            String short51 = Base64.getEncoder().encodeToString(new byte[51 * 80]);
+            JsonNode answer = owner.request("{\"op\":\"dm\",\"room\":\"" + roomId
+                    + "\",\"ciphertext\":\"AQID\",\"envelopes\":\"" + short51 + "\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+        }
+    }
+
+    @Test
+    void refusesDirectMessageWhereRoomForbidsIt() throws Exception {
+        try (Client owner = new Client()) {
+            String quiet = owner.request(
+                    "{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400,\"directAllowed\":false}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"enter\",\"room\":\"" + quiet + "\",\"since\":0}");
+            owner.drain();
+
+            String loud = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"enter\",\"room\":\"" + loud + "\",\"since\":0}");
+            owner.drain();
+            assertThat(owner.request("{\"op\":\"dm\",\"room\":\"" + loud
+                    + "\",\"ciphertext\":\"AQID\",\"envelopes\":\"" + envelopes() + "\"}")
+                    .get("op").asText())
+                    .as("в обычной комнате личное проходит — значит отказ ниже про настройку")
+                    .isEqualTo("direct");
+
+            JsonNode answer = owner.request("{\"op\":\"dm\",\"room\":\"" + quiet
+                    + "\",\"ciphertext\":\"AQID\",\"envelopes\":\"" + envelopes() + "\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+        }
+    }
+
+    @Test
+    void refusesDirectMessageToStranger() throws Exception {
+        try (Client owner = new Client(); Client stranger = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+            assertThat(owner.request("{\"op\":\"dm\",\"room\":\"" + roomId
+                    + "\",\"ciphertext\":\"AQID\",\"envelopes\":\"" + envelopes() + "\"}")
+                    .get("op").asText())
+                    .as("участнику проходит — значит отказ ниже про членство")
+                    .isEqualTo("direct");
+
+            JsonNode answer = stranger.request("{\"op\":\"dm\",\"room\":\"" + roomId
+                    + "\",\"ciphertext\":\"AQID\",\"envelopes\":\"" + envelopes() + "\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+        }
+    }
+
+    @Test
+    void publishesKeyOfPrivateCorrespondenceInTheRoster() throws Exception {
+        // Ключ переписки свой на каждую эпоху и публикуется владельцем: обёртку ключа
+        // комнаты кладёт другой участник, а этот ключ человек объявляет сам.
+        try (Client owner = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+
+            owner.send("{\"op\":\"dm-key\",\"room\":\"" + roomId + "\",\"epoch\":1,\"key\":\"ключ-переписки\"}");
+            JsonNode roster = owner.request("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+
+            assertThat(roster.get("members")).anySatisfy(seat -> {
+                assertThat(seat.get("device").asText()).isEqualTo(owner.publicKey());
+                assertThat(seat.get("dm").asText()).isEqualTo("ключ-переписки");
+            });
+        }
+    }
+
+    @Test
+    void catchesUpOnDirectMessagesAfterReconnect() throws Exception {
+        try (Client owner = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+            owner.send("{\"op\":\"dm\",\"room\":\"" + roomId
+                    + "\",\"ciphertext\":\"AQID\",\"envelopes\":\"" + envelopes() + "\"}");
+            owner.awaitOp("direct");
+
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0,\"sinceDirect\":0}");
+
+            assertThat(owner.awaitOp("direct").get("ciphertext").asText()).isEqualTo("AQID");
+        }
+    }
+
+    private static String envelopes() {
+        return Base64.getEncoder().encodeToString(new byte[52 * 80]);
+    }
+
+    @Test
     void survivesRedeemingAnOwnerInviteOnTheSameSession() throws Exception {
         // Owner-инвайт идёт без комнаты: рассылать состав некому. Раньше сервер всё равно
         // лез в реестр с room_id = null и ронял сессию — вкладка молча переподключалась,
