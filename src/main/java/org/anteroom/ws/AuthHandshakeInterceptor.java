@@ -28,6 +28,12 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
 
     public static final String DEVICE_ATTRIBUTE = "pubkey_sign";
 
+    /**
+     * Адрес соединения — только для счётчиков в памяти. На диск он не попадает и в базе
+     * его нет: журнал соединений в этой системе не предусмотрен.
+     */
+    public static final String ADDRESS_ATTRIBUTE = "address";
+
     private static final Logger log = LoggerFactory.getLogger(AuthHandshakeInterceptor.class);
 
     private final ChallengeService challenges;
@@ -55,6 +61,8 @@ public class AuthHandshakeInterceptor implements HandshakeInterceptor {
 
         devices.rememberSigningKey(device);
         attributes.put(DEVICE_ATTRIBUTE, device);
+        var remote = request.getRemoteAddress();
+        attributes.put(ADDRESS_ATTRIBUTE, remote == null ? "" : remote.getAddress().getHostAddress());
         return true;
     }
 

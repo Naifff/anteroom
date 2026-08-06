@@ -44,6 +44,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
   font-size:14.5px;margin-top:6px}
 .thread:disabled{cursor:default;background:none;color:var(--ink-3)}
 .thread .card{font-family:var(--mono);font-size:13px;min-width:3.4em}
+.thread-card{font-family:var(--mono);font-size:13px;color:var(--ink-2);align-self:center;margin-right:auto}
 .thread .last{color:var(--ink-3);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mine{align-self:flex-end}
 .mine .who{text-align:right}
@@ -211,6 +212,20 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
       <button class="act" id="makeOnce" disabled>Создать ссылку</button>
     </div>
     <textarea class="field hidden" id="onceLink" rows="3" readonly></textarea>
+
+    <h4 id="moderHead" class="hidden">Состав комнаты</h4>
+    <p id="moderWhy" class="hidden">Исключение поднимает эпоху ключа: новое исключённый уже не
+      прочитает. Всё, что он успел прочитать раньше, останется у него — перешифровать прошлое
+      невозможно. Его карта в колоду не вернётся.</p>
+    <div id="moderList"></div>
+
+    <h4 id="wipeHead" class="hidden">Стереть переписку</h4>
+    <p id="wipeWhy" class="hidden">Сервер немедленно удалит все сообщения, записки и вложения
+      этой комнаты. У тех, у кого вкладка открыта, лента опустеет. Копии, снятые до этого,
+      никуда не денутся.</p>
+    <div class="row hidden" id="wipeRow">
+      <button class="act danger" id="doWipe">Стереть всё</button>
+    </div>
 
     <h4>У меня уже есть ключ</h4>
     <p>Импорт заменит ключ на этом устройстве. Прежняя личность, если она не выгружена,
@@ -925,7 +940,7 @@ $('makeInvite').addEventListener('click', async () => {
   const token = sodium.to_base64(sodium.randombytes_buf(32), B64);
   const ephemeral = sodium.crypto_box_keypair();
 
-  ask({
+  await withProof({
     op: 'invite', room: roomId, tokenHash: await sha256Url(token),
     role: 'member', ttl: 86400, uses: 1,
     wrapped: sodium.to_base64(sodium.crypto_box_seal(roomKey, ephemeral.publicKey), B64ORIG),
@@ -962,6 +977,120 @@ $('makeOnce').addEventListener('click', async () => {
   $('onceLink').value = `${location.origin}/once#${token}.${sodium.to_base64(key, B64)}`;
   $('onceLink').select();
 });
+
+/* ---------- модерация ---------- */
+
+/**
+ * Состав комнаты с кнопкой исключения.
+ *
+ * Роль показывается только здесь, в момент действия, а не рядом с каждой репликой:
+ * в ленте она ничего не значит и только сообщала бы, к кому идти с просьбами.
+ */
+function drawModeration(frame) {
+  const mayIssue = frame.role === 'owner' || frame.role === 'admin';
+  for (const id of ['moderHead', 'moderWhy']) {
+    $(id).classList.toggle('hidden', !mayIssue);
+  }
+  for (const id of ['wipeHead', 'wipeWhy', 'wipeRow']) {
+    $(id).classList.toggle('hidden', frame.role !== 'owner');
+  }
+
+  const list = $('moderList');
+  list.textContent = '';
+  if (!mayIssue) return;
+
+  for (const seat of frame.members) {
+    if (seat.device === me()) continue;
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    const who = document.createElement('span');
+    who.className = 'thread-card';
+    who.textContent = cardName(seat.card);
+
+    const kick = document.createElement('button');
+    kick.className = 'act danger';
+    kick.textContent = 'Исключить';
+    kick.addEventListener('click', () => {
+      // Подтверждение обязательно: действие необратимо, карта не вернётся в колоду.
+      if (!confirm(`Исключить ${cardName(seat.card)}? Вернуть участника прежней картой уже нельзя.`)) {
+        return;
+      }
+      ask({ op: 'remove', room: roomId, device: seat.device });
+    });
+
+    row.append(who, kick);
+    list.append(row);
+  }
+}
+
+$('doWipe').addEventListener('click', () => {
+  if (!roomId) return;
+  if (!confirm('Стереть все сообщения, записки и вложения этой комнаты? Отменить нельзя.')) {
+    return;
+  }
+  ask({ op: 'wipe', room: roomId });
+});
+
+function onWiped() {
+  for (const entry of shown.values()) {
+    entry.row.remove();
+  }
+  shown.clear();
+  threads.clear();
+  seenDirect.clear();
+  lastSeenId = 0;
+  lastSeenDirect = 0;
+  $('status').textContent = 'переписка стёрта';
+  renderView();
+}
+
+/* ---------- пропуск на действие ---------- */
+
+/*
+ * Hashcash вместо капчи. Капча потребовала бы стороннего сервиса, то есть постороннего
+ * наблюдателя за каждым входом; здесь вместо этого тратится время процессора. Соль
+ * выдаёт сервер и гасит при предъявлении, поэтому решение нельзя ни заготовить, ни
+ * использовать дважды.
+ */
+let workWaiting = null;
+
+function askWork() {
+  return new Promise((resolve, reject) => {
+    workWaiting = { resolve, reject };
+    ask({ op: 'work' });
+  });
+}
+
+function solveWork(stamp) {
+  for (let counter = 0; ; counter++) {
+    const digest = sodium.crypto_hash_sha256(sodium.from_string(`${stamp.salt}:${counter}`));
+    let zeros = 0;
+    for (const byte of digest) {
+      if (byte === 0) { zeros += 8; continue; }
+      zeros += Math.clz32(byte) - 24;
+      break;
+    }
+    if (zeros >= stamp.bits) return String(counter);
+  }
+}
+
+/** Перебор синхронный и на доли секунды подвешивает вкладку — поэтому про него говорят вслух. */
+async function withProof(frame) {
+  const was = $('status').textContent;
+  $('status').textContent = 'считаю пропуск…';
+  try {
+    const stamp = await askWork();
+    if (stamp.bits > 0) {
+      frame.salt = stamp.salt;
+      frame.counter = solveWork(stamp);
+    }
+    ask(frame);
+    $('status').textContent = was;
+  } catch (e) {
+    $('status').textContent = e.message;
+  }
+}
 
 /* ---------- личные сообщения ---------- */
 
@@ -1185,7 +1314,7 @@ function onRedeemed(frame) {
     // отдельного экрана «вы владелец, теперь создайте комнату» не нужно.
     history.replaceState(null, '', '/');
     roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
-    ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
+    withProof({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
     return;
   }
 
@@ -1255,6 +1384,7 @@ function onRoom(frame) {
   }
   // Записку может выпустить любой участник: это способ отправить сообщение, а не право.
   $('makeOnce').disabled = false;
+  drawModeration(frame);
   $('seats').textContent = `${cardName(frame.card)} · ${frame.seatsTaken}/52`;
   if (frame.deckSpent) {
     $('status').textContent = 'колода кончилась — комната больше никого не принимает';
@@ -1367,7 +1497,7 @@ async function connect() {
       inviteToken = null;
     } else if (!roomId && !createRefused) {
       roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
-      ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
+      withProof({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
     } else {
       ask({ op: 'enter', room: roomId, since: lastSeenId, sinceDirect: lastSeenDirect });
       entered = true;
@@ -1381,6 +1511,11 @@ async function connect() {
     else if (frame.op === 'direct') onDirect(frame);
     else if (frame.op === 'key') onKey(frame);
     else if (frame.op === 'redeemed') onRedeemed(frame);
+    else if (frame.op === 'work') {
+      workWaiting?.resolve(frame);
+      workWaiting = null;
+    }
+    else if (frame.op === 'wiped') onWiped();
     else if (frame.op === 'upload-ready') {
       uploadWaiting?.resolve(frame);
       uploadWaiting = null;
@@ -1390,6 +1525,8 @@ async function connect() {
       // Отказ мог прийти на запрос пропуска — тогда ждать его дальше бессмысленно.
       uploadWaiting?.reject(new Error(frame.reason));
       uploadWaiting = null;
+      workWaiting?.reject(new Error(frame.reason));
+      workWaiting = null;
       $('status').textContent = frame.reason;
     }
   };
@@ -1402,6 +1539,8 @@ async function connect() {
     // Пропуск на загрузку с прошлого соединения уже не придёт.
     uploadWaiting?.reject(new Error('связь потеряна'));
     uploadWaiting = null;
+    workWaiting?.reject(new Error('связь потеряна'));
+    workWaiting = null;
     setTimeout(connect, 1000);
   };
 }

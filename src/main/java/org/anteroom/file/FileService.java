@@ -210,6 +210,16 @@ public class FileService {
         return jdbc.update("DELETE FROM file WHERE expires_at <= ?", now);
     }
 
+    /** Стирает вложения комнаты целиком. Порядок тот же: сначала блоб, потом строка. */
+    public int wipeRoom(String roomId) {
+        List<String> ids = jdbc.queryForList(
+                "SELECT id FROM file WHERE room_id = ?", String.class, roomId);
+        for (String id : ids) {
+            blobs.delete(id);
+        }
+        return jdbc.update("DELETE FROM file WHERE room_id = ?", roomId);
+    }
+
     /**
      * Блобы, которым не соответствует ни одна строка.
      *

@@ -109,4 +109,8 @@ public class DirectService {
     public int sweepExpired() {
         return jdbc.update("DELETE FROM direct WHERE expires_at <= ?", clock.millis());
     }
+
+    public int wipeRoom(String roomId) {
+        return jdbc.update("DELETE FROM direct WHERE room_id = ?", roomId);
+    }
 }

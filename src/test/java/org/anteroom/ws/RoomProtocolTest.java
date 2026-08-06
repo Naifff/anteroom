@@ -13,6 +13,7 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -36,7 +37,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = { "app.data-dir=build/test-data-protocol", "app.challenge.per-ip-limit=10000" })
+        properties = {
+                "app.data-dir=build/test-data-protocol",
+                "app.challenge.per-ip-limit=10000",
+                // Потолки и пропуск проверяет RoomLimitsTest, здесь они только мешали бы:
+                // тесты протокола заводят десятки комнат с одного адреса.
+                "app.work.bits=0",
+                "app.limit.create-per-hour=100000",
+                "app.limit.create-per-hour-ip=100000",
+                "app.limit.invite-per-hour=100000",
+                "app.limit.write-per-minute=100000" })
 class RoomProtocolTest {
 
     private static final Path DATA_DIR = Path.of("build/test-data-protocol");
@@ -395,6 +405,153 @@ class RoomProtocolTest {
     }
 
     @Test
+    void removesMemberAndRotatesEpoch() throws Exception {
+        // Ротация при исключении обязательна: старую историю удалённый расшифрует, новую нет.
+        // Без неё исключение — только запись в базе, ключ у человека остался.
+        try (Client owner = new Client(); Client guest = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            inviteAndRedeem(owner, roomId, "для-гостя", guest);
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+
+            owner.send("{\"op\":\"remove\",\"room\":\"" + roomId + "\",\"device\":\"" + guest.publicKey() + "\"}");
+
+            JsonNode roster = owner.awaitOp("room");
+            assertThat(roster.get("epoch").asInt()).isEqualTo(2);
+            assertThat(roster.get("members")).noneSatisfy(seat ->
+                    assertThat(seat.get("device").asText()).isEqualTo(guest.publicKey()));
+        }
+    }
+
+    @Test
+    void keepsTheCardOfARemovedMemberTaken() throws Exception {
+        // Выбывшая карта в колоду не возвращается: иначе через неделю «восьмёрка бубён»
+        // окажется другим человеком, а её старые реплики останутся висеть выше.
+        try (Client owner = new Client(); Client guest = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            inviteAndRedeem(owner, roomId, "для-гостя", guest);
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+
+            owner.send("{\"op\":\"remove\",\"room\":\"" + roomId + "\",\"device\":\"" + guest.publicKey() + "\"}");
+            owner.awaitOp("room");
+
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM member WHERE room_id = ? AND left_at IS NOT NULL",
+                    Integer.class, roomId)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT seats_taken FROM room WHERE id = ?",
+                    Integer.class, roomId))
+                    .as("место остаётся занятым навсегда")
+                    .isEqualTo(2);
+        }
+    }
+
+    @Test
+    void closesLiveSessionsOfRemovedMember() throws Exception {
+        // Оставить сокет открытым значит оставить исключённому рассылку до реконнекта.
+        try (Client owner = new Client(); Client guest = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            inviteAndRedeem(owner, roomId, "для-гостя", guest);
+            guest.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            guest.drain();
+            owner.drain();
+
+            owner.send("{\"op\":\"remove\",\"room\":\"" + roomId + "\",\"device\":\"" + guest.publicKey() + "\"}");
+
+            assertThat(guest.awaitClose()).as("сессия исключённого закрыта сервером").isTrue();
+        }
+    }
+
+    @Test
+    void refusesRemovalToOrdinaryMember() throws Exception {
+        try (Client owner = new Client(); Client guest = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            inviteAndRedeem(owner, roomId, "для-гостя", guest);
+            guest.drain();
+
+            JsonNode answer = guest.request("{\"op\":\"remove\",\"room\":\"" + roomId
+                    + "\",\"device\":\"" + owner.publicKey() + "\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+            assertThat(jdbc.queryForObject("SELECT key_epoch FROM room WHERE id = ?",
+                    Integer.class, roomId))
+                    .as("эпоха не тронута")
+                    .isEqualTo(1);
+
+            // Владельцу то же самое удаётся — значит отказ был про роль, а не про операцию.
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+            owner.send("{\"op\":\"remove\",\"room\":\"" + roomId
+                    + "\",\"device\":\"" + guest.publicKey() + "\"}");
+            assertThat(owner.awaitOp("room").get("epoch").asInt()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void wipesEverythingTheRoomHeld() throws Exception {
+        try (Client owner = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+
+            owner.send("{\"op\":\"send\",\"room\":\"" + roomId + "\",\"ciphertext\":\"AQID\"}");
+            owner.awaitOp("msg");
+            owner.send("{\"op\":\"dm\",\"room\":\"" + roomId
+                    + "\",\"ciphertext\":\"AQID\",\"envelopes\":\"" + envelopes() + "\"}");
+            owner.awaitOp("direct");
+            owner.send("{\"op\":\"once\",\"room\":\"" + roomId
+                    + "\",\"tokenHash\":\"записка\",\"ciphertext\":\"AQID\"}");
+            owner.awaitOp("once-stored");
+
+            owner.send("{\"op\":\"wipe\",\"room\":\"" + roomId + "\"}");
+            assertThat(owner.awaitOp("wiped").get("room").asText()).isEqualTo(roomId);
+
+            for (String table : new String[] { "message", "direct", "onetime" }) {
+                assertThat(jdbc.queryForObject(
+                        "SELECT count(*) FROM " + table + " WHERE room_id = ?", Integer.class, roomId))
+                        .as(table + " опустела")
+                        .isZero();
+            }
+            assertThat(jdbc.queryForObject("SELECT count(*) FROM room WHERE id = ?", Integer.class, roomId))
+                    .as("сама комната остаётся: стёрли содержимое, а не комнату")
+                    .isEqualTo(1);
+        }
+    }
+
+    @Test
+    void refusesWipeToOrdinaryMember() throws Exception {
+        try (Client owner = new Client(); Client guest = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            inviteAndRedeem(owner, roomId, "для-гостя", guest);
+            guest.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            guest.drain();
+            guest.send("{\"op\":\"send\",\"room\":\"" + roomId + "\",\"ciphertext\":\"AQID\"}");
+            guest.awaitOp("msg");
+
+            JsonNode answer = guest.request("{\"op\":\"wipe\",\"room\":\"" + roomId + "\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM message WHERE room_id = ?", Integer.class, roomId))
+                    .as("реплика цела")
+                    .isEqualTo(1);
+
+            // Владельцу то же самое удаётся — значит отказ был про роль, а не про операцию.
+            owner.send("{\"op\":\"wipe\",\"room\":\"" + roomId + "\"}");
+            owner.awaitOp("wiped");
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM message WHERE room_id = ?", Integer.class, roomId)).isZero();
+        }
+    }
+
+    @Test
     void survivesRedeemingAnOwnerInviteOnTheSameSession() throws Exception {
         // Owner-инвайт идёт без комнаты: рассылать состав некому. Раньше сервер всё равно
         // лез в реестр с room_id = null и ронял сессию — вкладка молча переподключалась,
@@ -705,6 +862,7 @@ class RoomProtocolTest {
     private final class Client extends TextWebSocketHandler implements AutoCloseable {
 
         private final BlockingQueue<String> received = new LinkedBlockingQueue<>();
+        private final CountDownLatch closed = new CountDownLatch(1);
         private final WebSocketSession session;
         private final String publicKey;
 
@@ -786,6 +944,15 @@ class RoomProtocolTest {
         @Override
         protected void handleTextMessage(WebSocketSession session, TextMessage message) {
             received.add(message.getPayload());
+        }
+
+        @Override
+        public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+            closed.countDown();
+        }
+
+        boolean awaitClose() throws InterruptedException {
+            return closed.await(5, TimeUnit.SECONDS);
         }
 
         @Override
