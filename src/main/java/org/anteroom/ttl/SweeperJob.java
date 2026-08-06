@@ -4,6 +4,7 @@ import java.time.Clock;
 
 import org.anteroom.file.FileService;
 import org.anteroom.message.MessageService;
+import org.anteroom.message.OneTimeService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -32,12 +33,15 @@ public class SweeperJob {
 
     private final MessageService messages;
     private final FileService files;
+    private final OneTimeService onetime;
     private final JdbcTemplate jdbc;
     private final Clock clock;
 
-    public SweeperJob(MessageService messages, FileService files, JdbcTemplate jdbc, Clock clock) {
+    public SweeperJob(MessageService messages, FileService files, OneTimeService onetime,
+                      JdbcTemplate jdbc, Clock clock) {
         this.messages = messages;
         this.files = files;
+        this.onetime = onetime;
         this.jdbc = jdbc;
         this.clock = clock;
     }
@@ -51,7 +55,7 @@ public class SweeperJob {
         // Вложения убирает FileService: у них есть вторая половина на диске, и порядок
         // «сначала блоб, потом строка» держится там.
         deleted += files.sweepExpired();
-        deleted += jdbc.update("DELETE FROM onetime WHERE expires_at <= ?", now);
+        deleted += onetime.sweepExpired();
         // Исчерпанные инвайты уходят вместе с протухшими: пока строка жива, она держит
         // wrapped_key, и сохранённая кем-то ссылка остаётся заряженной.
         deleted += jdbc.update("DELETE FROM invite WHERE expires_at <= ? OR uses_left <= 0", now);

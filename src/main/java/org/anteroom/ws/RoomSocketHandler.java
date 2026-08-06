@@ -11,6 +11,7 @@ import org.anteroom.file.Upload;
 import org.anteroom.invite.InviteService;
 import org.anteroom.invite.Redemption;
 import org.anteroom.message.MessageService;
+import org.anteroom.message.OneTimeService;
 import org.anteroom.message.StoredMessage;
 import org.anteroom.room.DeckSpentException;
 import org.anteroom.room.KeyEpochService;
@@ -55,11 +56,12 @@ public class RoomSocketHandler extends TextWebSocketHandler {
     private final DeviceService devices;
     private final InviteService invites;
     private final FileService files;
+    private final OneTimeService onetime;
     private final ObjectMapper json = new ObjectMapper();
 
     public RoomSocketHandler(SessionRegistry registry, MessageService messages, RoomService rooms,
                              KeyEpochService epochs, DeviceService devices, InviteService invites,
-                             FileService files) {
+                             FileService files, OneTimeService onetime) {
         this.registry = registry;
         this.messages = messages;
         this.rooms = rooms;
@@ -67,6 +69,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         this.devices = devices;
         this.invites = invites;
         this.files = files;
+        this.onetime = onetime;
     }
 
     @Override
@@ -93,6 +96,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
                 case "key" -> key(session, device, frame);
                 case "wrap" -> wrap(session, device, frame);
                 case "upload" -> upload(session, device, frame);
+                case "once" -> once(session, device, frame);
                 case "send" -> send(session, device, frame);
                 default -> fail(session, "неизвестная операция");
             }
@@ -157,7 +161,11 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         answer.put("wrapped", Base64.getEncoder().encodeToString(result.wrappedKey()));
         write(session, answer);
 
-        announceRoster(result.roomId(), session);
+        // У owner-инвайта комнаты нет: рассылать состав некому, и лезть с ним в реестр
+        // нельзя — там ключом карты выступает номер комнаты.
+        if (result.roomId() != null) {
+            announceRoster(result.roomId(), session);
+        }
     }
 
     private void revoke(WebSocketSession session, String device, JsonNode frame) {
@@ -244,6 +252,26 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         answer.put("id", permit.id());
         answer.put("token", permit.token());
         answer.put("expiresAt", permit.expiresAt());
+        write(session, answer);
+    }
+
+    /**
+     * Одноразовая записка.
+     *
+     * <p>Как и у приглашения, сюда приезжает только SHA-256 токена: сам токен вместе
+     * с ключом от записки живёт во фрагменте ссылки и на сервер не попадает.
+     */
+    private void once(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        String roomId = frame.path("room").asText();
+        requireMember(roomId, device);
+
+        Long requested = frame.hasNonNull("ttl") ? frame.get("ttl").asLong() : null;
+        onetime.create(rooms.find(roomId), frame.path("tokenHash").asText(),
+                Base64.getDecoder().decode(frame.path("ciphertext").asText()), requested);
+
+        ObjectNode answer = json.createObjectNode();
+        answer.put("op", "once-stored");
+        answer.put("room", roomId);
         write(session, answer);
     }
 

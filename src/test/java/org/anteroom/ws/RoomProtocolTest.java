@@ -17,6 +17,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import org.anteroom.auth.Ed25519Keys;
+import org.anteroom.invite.InviteHash;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -255,6 +256,63 @@ class RoomProtocolTest {
                     + "\",\"size\":999999999}");
 
             assertThat(answer.get("op").asText()).isEqualTo("error");
+        }
+    }
+
+    @Test
+    void survivesRedeemingAnOwnerInviteOnTheSameSession() throws Exception {
+        // Owner-инвайт идёт без комнаты: рассылать состав некому. Раньше сервер всё равно
+        // лез в реестр с room_id = null и ронял сессию — вкладка молча переподключалась,
+        // поэтому наружу это выглядело исправной работой.
+        try (Client newcomer = new Client(false)) {
+            jdbc.update("""
+                    INSERT INTO invite (token_hash, room_id, role, created_by, wrapped_key, expires_at, uses_left)
+                    VALUES (?, NULL, 'owner', NULL, x'00', ?, 1)
+                    """, InviteHash.of("owner-пропуск"), System.currentTimeMillis() + 3_600_000);
+
+            JsonNode redeemed = newcomer.request("{\"op\":\"redeem\",\"token\":\"owner-пропуск\"}");
+            assertThat(redeemed.get("op").asText()).isEqualTo("redeemed");
+
+            // Та же сессия обязана продолжать работать: если её закрыли, ответа не будет.
+            JsonNode room = newcomer.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}");
+            assertThat(room.get("op").asText()).isEqualTo("room");
+        }
+    }
+
+    @Test
+    void storesOneTimeNoteForMember() throws Exception {
+        try (Client owner = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+
+            JsonNode answer = owner.request("{\"op\":\"once\",\"room\":\"" + roomId
+                    + "\",\"tokenHash\":\"хэш-записки\",\"ciphertext\":\"0JfQsNC/0LjRgdC60LA=\",\"ttl\":3600}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("once-stored");
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM onetime WHERE token_hash = 'хэш-записки'", Integer.class))
+                    .isEqualTo(1);
+        }
+    }
+
+    @Test
+    void refusesOneTimeNoteToStranger() throws Exception {
+        // Записка привязана к комнате: без этого её не заденет ни удаление комнаты,
+        // ни исключение автора.
+        try (Client owner = new Client(); Client stranger = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            assertThat(owner.request("{\"op\":\"once\",\"room\":\"" + roomId
+                    + "\",\"tokenHash\":\"своя\",\"ciphertext\":\"AQID\"}").get("op").asText())
+                    .as("участнику записка сохраняется — значит отказ ниже про членство")
+                    .isEqualTo("once-stored");
+
+            JsonNode answer = stranger.request("{\"op\":\"once\",\"room\":\"" + roomId
+                    + "\",\"tokenHash\":\"чужая\",\"ciphertext\":\"AQID\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+            assertThat(jdbc.queryForObject(
+                    "SELECT count(*) FROM onetime WHERE token_hash = 'чужая'", Integer.class)).isZero();
         }
     }
 

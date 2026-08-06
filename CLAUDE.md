@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Состояние репозитория
 
-**Сделаны фазы 0–8, регистрация закрыта.** Следующая работа — **фаза 9, одноразовые ссылки**.
+**Сделаны фазы 0–9, регистрация закрыта.** Следующая работа — **фаза 10, личные сообщения**.
 
 Пропуск на сервер даёт погашенное приглашение, а не подпись: подпись говорит «это тот же
 ключ», а не «его сюда звали». Owner-инвайт печатается в журнал при первом старте, один раз
@@ -29,6 +29,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   заголовком `X-Upload-Token`. Ключ на каждый файл свой, `secretstream` чанками по 256 КБ;
   ключ, имя и MIME-тип лежат внутри сообщения. Скачивание открыто без входа: имя блоба
   и есть пропуск, а без ключа из сообщения там мусор.
+- **Одноразовые записки.** Ключ у записки свой, не ключ комнаты. Страница `/once` отдельная
+  от SPA: открывающий может быть посторонним, заводить ему личность устройства незачем.
+  Сжигание — `POST /api/once` с токеном **в теле**; GET только показывает предупреждение,
+  иначе превью-боты сожгли бы ссылку до человека.
 
 Формат сообщения — конверт с версией: `{v: 1, t: 'text'|'file', …}`. **Не выпускать формат
 без поля версии**: без него смена криптосхемы ломает всё отправленное, и миграцию некуда
@@ -320,12 +324,12 @@ src/main/java/…/
   auth/          ChallengeService, ServerKeyStore, Ed25519Keys
   room/          RoomService, MemberService, KeyEpochService, CardDealer
   invite/        InviteService (создание, погашение, каскадный отзыв)
-  message/       MessageService, OneTimeService
+  message/       MessageService, OneTimeService, OnceController
   file/          FileService, FileController, BlobStore, Upload (фаза 8)
   ttl/           SweeperJob
 src/main/resources/
   db/migration/  V1__init.sql, V2__…, V3__files.sql
-  static/        SPA, libsodium-sumo (вендорится локально)
+  static/        SPA, once.html (страница записки), libsodium-sumo (вендорится локально)
 src/test/resources/
   browser/       селф-тесты на JS (в jar не попадают, bootRun раздаёт их по /browser/)
 data/            server.key, messenger.db, blobs/  (монтируется томом в Docker)
