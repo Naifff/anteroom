@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Самопроверка вложений</title>
+<style>
+  body { font: 14px/1.6 ui-monospace, monospace; max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+  .pass::before { content: "PASS "; color: #14532d; }
+  .fail::before { content: "FAIL "; color: #7f1d1d; }
+  .fail { color: #7f1d1d; }
+  #total { font-weight: bold; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+<h1>Самопроверка вложений</h1>
+<p>Шифрование файла: ключ на файл, чанки, метка конца потока. Хранилище ключа устройства
+   эта страница не трогает.</p>
+<div id="total">выполняется…</div>
+<div id="results"></div>
+
+<script src="/vendor/libsodium-sumo.js"></script>
+<script src="/vendor/libsodium-wrappers-sumo.js"></script>
+<script type="module">
+import { encryptFile, decryptFile, CHUNK, MAX_PLAINTEXT } from '/js/attach.js';
+
+const results = document.getElementById('results');
+let passed = 0;
+let failed = 0;
+
+async function check(name, body) {
+  const row = document.createElement('div');
+  try {
+    await body();
+    row.className = 'pass';
+    row.textContent = name;
+    passed++;
+  } catch (e) {
+    row.className = 'fail';
+    row.textContent = `${name} — ${e.message}`;
+    failed++;
+  }
+  results.append(row);
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}
+
+function same(a, b) {
+  return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
+function noise(length) {
+  const out = new Uint8Array(length);
+  for (let i = 0; i < length; i++) out[i] = (i * 37 + (i >> 8)) & 0xff;
+  return out;
+}
+
+await sodium.ready;
+
+await check('файл возвращается байт в байт', () => {
+  const plain = noise(5000);
+  const { key, ciphertext } = encryptFile(plain);
+  assert(same(decryptFile(ciphertext, key), plain), 'расшифровка не совпала с исходником');
+});
+
+await check('файл ровно в один чанк', () => {
+  const plain = noise(CHUNK);
+  const { key, ciphertext } = encryptFile(plain);
+  assert(same(decryptFile(ciphertext, key), plain), 'граница чанка потеряна');
+});
+
+await check('файл длиннее чанка на байт', () => {
+  const plain = noise(CHUNK + 1);
+  const { key, ciphertext } = encryptFile(plain);
+  assert(same(decryptFile(ciphertext, key), plain), 'второй чанк потерян');
+});
+
+await check('пустой файл', () => {
+  const plain = new Uint8Array(0);
+  const { key, ciphertext } = encryptFile(plain);
+  assert(decryptFile(ciphertext, key).length === 0, 'из пустого вышло непустое');
+});
+
+await check('несколько чанков', () => {
+  const plain = noise(CHUNK * 3 + 77);
+  const { key, ciphertext } = encryptFile(plain);
+  assert(same(decryptFile(ciphertext, key), plain), 'сборка из чанков разъехалась');
+});
+
+await check('ключ на каждый файл свой', () => {
+  const plain = noise(1000);
+  const first = encryptFile(plain);
+  const second = encryptFile(plain);
+  assert(!same(first.key, second.key), 'ключ повторился');
+  assert(!same(first.ciphertext, second.ciphertext), 'шифротекст двух файлов совпал побайтно');
+});
+
+await check('чужим ключом не открывается', () => {
+  const { ciphertext } = encryptFile(noise(1000));
+  const stranger = sodium.crypto_secretstream_xchacha20poly1305_keygen();
+  let refused = false;
+  try {
+    decryptFile(ciphertext, stranger);
+  } catch {
+    refused = true;
+  }
+  assert(refused, 'чужой ключ открыл файл');
+});
+
+await check('обрезанный файл не притворяется целым', () => {
+  // Без метки конца потока хвост можно отрезать незаметно: получатель увидел бы
+  // «почти тот же файл», а это другой файл.
+  const plain = noise(CHUNK * 2);
+  const { key, ciphertext } = encryptFile(plain);
+  const cut = ciphertext.slice(0, ciphertext.length - (CHUNK + 17));
+
+  let refused = false;
+  try {
+    decryptFile(cut, key);
+  } catch {
+    refused = true;
+  }
+  assert(refused, 'обрезанный файл открылся молча');
+});
+
+await check('порченый байт замечается', () => {
+  const { key, ciphertext } = encryptFile(noise(1000));
+  const spoiled = ciphertext.slice();
+  spoiled[spoiled.length - 5] ^= 1;
+
+  let refused = false;
+  try {
+    decryptFile(spoiled, key);
+  } catch {
+    refused = true;
+  }
+  assert(refused, 'подмена байта прошла незамеченной');
+});
+
+await check('предельный файл влезает в серверный потолок', () => {
+  // Порог на сервере задан в байтах шифротекста (21 МБ). Служебные байты secretstream
+  // не должны выталкивать за него файл, разрешённый по открытому тексту.
+  const chunks = Math.ceil(MAX_PLAINTEXT / CHUNK);
+  const size = sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES
+    + MAX_PLAINTEXT
+    + chunks * sodium.crypto_secretstream_xchacha20poly1305_ABYTES;
+  assert(size <= 21 * 1024 * 1024, `шифротекст предельного файла — ${size} байт, потолок 22020096`);
+});
+
+document.getElementById('total').textContent =
+  failed === 0 ? `всё сошлось: ${passed}` : `провалов ${failed} из ${passed + failed}`;
+</script>
+</body>
+</html>

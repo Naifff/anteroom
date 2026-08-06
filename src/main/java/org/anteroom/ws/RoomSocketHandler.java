@@ -5,6 +5,9 @@ import java.util.Base64;
 import java.util.List;
 
 import org.anteroom.device.DeviceService;
+import org.anteroom.file.FileService;
+import org.anteroom.file.FileTooLargeException;
+import org.anteroom.file.Upload;
 import org.anteroom.invite.InviteService;
 import org.anteroom.invite.Redemption;
 import org.anteroom.message.MessageService;
@@ -51,16 +54,19 @@ public class RoomSocketHandler extends TextWebSocketHandler {
     private final KeyEpochService epochs;
     private final DeviceService devices;
     private final InviteService invites;
+    private final FileService files;
     private final ObjectMapper json = new ObjectMapper();
 
     public RoomSocketHandler(SessionRegistry registry, MessageService messages, RoomService rooms,
-                             KeyEpochService epochs, DeviceService devices, InviteService invites) {
+                             KeyEpochService epochs, DeviceService devices, InviteService invites,
+                             FileService files) {
         this.registry = registry;
         this.messages = messages;
         this.rooms = rooms;
         this.epochs = epochs;
         this.devices = devices;
         this.invites = invites;
+        this.files = files;
     }
 
     @Override
@@ -86,9 +92,12 @@ public class RoomSocketHandler extends TextWebSocketHandler {
                 case "enter" -> enter(session, device, frame);
                 case "key" -> key(session, device, frame);
                 case "wrap" -> wrap(session, device, frame);
+                case "upload" -> upload(session, device, frame);
                 case "send" -> send(session, device, frame);
                 default -> fail(session, "неизвестная операция");
             }
+        } catch (FileTooLargeException e) {
+            fail(session, e.getMessage());
         } catch (DeckSpentException e) {
             // Не ошибка выдачи, а конец жизни комнаты — и называется отдельно, чтобы
             // интерфейс мог сказать это словами, а не показать общий отказ.
@@ -214,6 +223,28 @@ public class RoomSocketHandler extends TextWebSocketHandler {
 
         epochs.storeWrappedKey(roomId, forDevice, frame.path("epoch").asInt(),
                 Base64.getDecoder().decode(frame.path("wrapped").asText()));
+    }
+
+    /**
+     * Пропуск на загрузку вложения.
+     *
+     * <p>Членство проверяется здесь, а не в HTTP-эндпоинте: у того входа нет ни сессии,
+     * ни подписи — только этот токен, короткоживущий и одноразовый.
+     */
+    private void upload(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        String roomId = frame.path("room").asText();
+        requireMember(roomId, device);
+
+        Long requested = frame.hasNonNull("ttl") ? frame.get("ttl").asLong() : null;
+        Upload permit = files.issue(rooms.find(roomId), device, frame.path("size").asLong(), requested);
+
+        ObjectNode answer = json.createObjectNode();
+        answer.put("op", "upload-ready");
+        answer.put("room", roomId);
+        answer.put("id", permit.id());
+        answer.put("token", permit.token());
+        answer.put("expiresAt", permit.expiresAt());
+        write(session, answer);
     }
 
     private void send(WebSocketSession session, String device, JsonNode frame) throws IOException {

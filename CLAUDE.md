@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Состояние репозитория
 
-**Сделаны фазы 0–7, регистрация закрыта.** Следующая работа — **фаза 8, передача файлов**.
+**Сделаны фазы 0–8, регистрация закрыта.** Следующая работа — **фаза 9, одноразовые ссылки**.
 
 Пропуск на сервер даёт погашенное приглашение, а не подпись: подпись говорит «это тот же
 ключ», а не «его сюда звали». Owner-инвайт печатается в журнал при первом старте, один раз
@@ -25,6 +25,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   Вход по номеру комнаты закрыт.
 - **Владелец сервера.** `instance_owner`, наполняется погашением owner-инвайта
   (`invite` с `room_id IS NULL`). Без пропуска нельзя даже завести комнату.
+- **Вложения.** Пропуск на загрузку выдаётся по сокету, тело едет `POST /api/file`
+  заголовком `X-Upload-Token`. Ключ на каждый файл свой, `secretstream` чанками по 256 КБ;
+  ключ, имя и MIME-тип лежат внутри сообщения. Скачивание открыто без входа: имя блоба
+  и есть пропуск, а без ключа из сообщения там мусор.
+
+Формат сообщения — конверт с версией: `{v: 1, t: 'text'|'file', …}`. **Не выпускать формат
+без поля версии**: без него смена криптосхемы ломает всё отправленное, и миграцию некуда
+зацепить.
 
 Ed25519 на сервере — штатный из JDK (`java.security`, с 15-й версии), стороннего крипто
 не тащили. Преобразование сырых 32 байт в точку кривой — только в `auth/Ed25519Keys`,
@@ -34,9 +42,15 @@ Ed25519 на сервере — штатный из JDK (`java.security`, с 15-
 цепочка переноса прогнана, цикл сканирования — на подставном потоке с холста.
 
 Тестов на JS нет, npm не заводили: он против вендоринга без сборщика. Ассерты гоняются
-в браузере страницами из `src/test/resources/browser/` — в jar они не попадают. Запуск:
-поднять статику и открыть их. Страница идентичности **стирает хранилище ключа на своём
-origin**, на боевом домене не открывать.
+в браузере страницами из `src/test/resources/browser/` — в jar они не попадают, но `bootRun`
+раздаёт их по `/browser/` из `build/browser-tests/` (задача `stageBrowserTests` в
+`build.gradle`). Открывать с того же origin обязательно: иначе `import` из `/js/` не
+разрешится. Страницы, работающие с личностью, **стирают хранилище ключа на своём origin** —
+на боевом домене не открывать. Существующие тесты:
+- `identity-selftest.html` — генерация/экспорт/импорт ключей
+- `export-selftest.html` — 24 слова по векторам BIP-39 и `key.enc`
+- `transfer-selftest.html` — перенос по QR
+- `attach-selftest.html` — шифрование/расшифровка файлов (хранилище ключа не трогает)
 
 Известный зазор: `ApplicationReadyEvent` срабатывает после открытия порта, поэтому
 «чистит базу до раздачи трафика» выполняется не буквально. Наружу протухшее всё равно
@@ -157,8 +171,17 @@ Service Worker, потоковая расшифровка, возобновля�
 - Сервер видит только размер и время. Размер тоже утекает; паддинг до степени двойки —
   кандидат на будущее.
 - **Удалять в порядке: блоб, затем строка в БД.** Обратный порядок оставляет вечный мусор
-  на диске. При старте — скан на осиротевшие блобы.
+  на диске. При старте — скан на осиротевшие блобы (`FileService.removeOrphans`, зовёт его
+  `SweeperJob.sweepOrphanBlobs` на `ApplicationReadyEvent`). Признак «загрузка ещё идёт» —
+  невыданный токен, а не возраст файла: часы приложения и время на диске идут порознь.
 - Антивирусная проверка при E2E невозможна в принципе. Написать это в UI, а не умалчивать.
+
+Реализация в пакете `file/`:
+- `FileController` — HTTP-эндпоинты загрузки/скачивания
+- `FileService` — создание upload-токенов, валидация, квоты
+- `BlobStore` — работа с `data/blobs/`, cleanup осиротевших
+- `Upload` — короткоживущий токен авторизации загрузки
+- `StoredFile` — метаданные файла (без ключа расшифровки)
 
 ## Имена участников: колода
 
@@ -292,17 +315,20 @@ Sweeper: `@Scheduled(fixedDelay = 30_000)` плюс прогон на `Applicati
 
 ```
 src/main/java/…/
-  config/        WebSocketConfig, SchedulingConfig, DataSourceConfig
+  config/        WebSocketConfig, SchedulingConfig, DataSourceConfig, ClockConfig, AuthConfig
   ws/            RoomSocketHandler, AuthHandshakeInterceptor, SessionRegistry
-  auth/          ChallengeService, ServerKeyStore
-  room/          RoomService, MemberService, KeyEpochService
+  auth/          ChallengeService, ServerKeyStore, Ed25519Keys
+  room/          RoomService, MemberService, KeyEpochService, CardDealer
   invite/        InviteService (создание, погашение, каскадный отзыв)
   message/       MessageService, OneTimeService
+  file/          FileService, FileController, BlobStore, Upload (фаза 8)
   ttl/           SweeperJob
 src/main/resources/
-  db/migration/  V1__init.sql, V2__…
-  static/        SPA
-data/            server.key, messenger.db  (монтируется томом в Docker)
+  db/migration/  V1__init.sql, V2__…, V3__files.sql
+  static/        SPA, libsodium-sumo (вендорится локально)
+src/test/resources/
+  browser/       селф-тесты на JS (в jar не попадают, bootRun раздаёт их по /browser/)
+data/            server.key, messenger.db, blobs/  (монтируется томом в Docker)
 ```
 
 ## Команды
@@ -312,6 +338,8 @@ data/            server.key, messenger.db  (монтируется томом в
 ./gradlew bootJar                 # build/libs/messenger.jar
 ./gradlew test                    # юнит + интеграционные на SQLite в build/test-data
 ./gradlew test --tests '*DatabaseBootstrapTest*'   # один тест
+./gradlew test --tests '*SweeperJobTest*'   # тесты TTL-уборки
+./gradlew test --tests '*FileServiceTest*'  # тесты файлов (фаза 8)
 java -jar build/libs/messenger.jar --app.data-dir=/var/lib/messenger --server.port=18080
 ```
 
@@ -321,6 +349,17 @@ Java 21 фиксирована toolchain'ом — системный JAVA_HOME �
 
 ```bash
 open prototype.html
+```
+
+JS-тесты браузером. Страницы про личность стирают IndexedDB на своём origin, страница
+вложений — нет:
+
+```bash
+./gradlew bootRun                                  # раздаёт и /browser/, и статику
+open http://localhost:8080/browser/attach-selftest.html
+open http://localhost:8080/browser/export-selftest.html
+open http://localhost:8080/browser/identity-selftest.html
+open http://localhost:8080/browser/transfer-selftest.html
 ```
 
 ## Как проверять изменения
@@ -337,3 +376,17 @@ open prototype.html
 
 Полный приёмочный чеклист по безопасности — фаза 13 плана, четырнадцать пунктов.
 Прогонять перед релизом целиком, а не выборочно.
+
+## Стиль работы с проектом
+
+- **Сверяться с планом перед кодом.** Фазы упорядочены так, чтобы рискованное проверялось
+  раньше дешёвого. Порядок не менять без причины.
+- **Критерии «готово» фаз — это проверки, не ощущения.** Они сформулированы как действия,
+  которые надо прогнать, а не как «убедиться что всё работает».
+- **Тесты пишутся на Java, не на JS.** npm не заводили, libsodium вендорится без сборщика.
+  Браузерные тесты — только для того, что невозможно проверить иначе (QR, камера, rAF).
+- **Не логировать секреты.** Полные URL, ключи, токены, публичные ключи участников —
+  всё это не должно попадать в stdout/stderr. IP-адреса — только для rate-limiter'а.
+- **Инварианты из модели угроз нельзя нарушать.** Открытый текст не покидает браузер,
+  секреты только во фрагменте URL, сервер хранит только хэши токенов. Нарушение любого
+  из правил раздела «Модель угроз» — это баг уровня блокера, не техдолг.

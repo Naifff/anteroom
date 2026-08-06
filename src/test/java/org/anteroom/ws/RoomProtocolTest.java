@@ -206,6 +206,59 @@ class RoomProtocolTest {
     }
 
     @Test
+    void handsUploadTokenToMember() throws Exception {
+        // Пропуск на загрузку выдаётся по сокету, а тело едет отдельным HTTP-запросом:
+        // двадцать мегабайт по каналу сообщений забили бы ленту всем участникам.
+        try (Client owner = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+
+            JsonNode answer = owner.request(
+                    "{\"op\":\"upload\",\"room\":\"" + roomId + "\",\"size\":1000,\"ttl\":3600}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("upload-ready");
+            assertThat(answer.get("id").asText()).isNotBlank();
+            assertThat(answer.get("token").asText()).isNotBlank();
+            assertThat(answer.get("expiresAt").asLong()).isGreaterThan(System.currentTimeMillis());
+        }
+    }
+
+    @Test
+    void refusesUploadTokenToStranger() throws Exception {
+        try (Client owner = new Client(); Client stranger = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            assertThat(owner.request("{\"op\":\"upload\",\"room\":\"" + roomId + "\",\"size\":1000}")
+                    .get("op").asText())
+                    .as("участнику пропуск выдаётся — значит отказ ниже про членство")
+                    .isEqualTo("upload-ready");
+
+            JsonNode answer = stranger.request(
+                    "{\"op\":\"upload\",\"room\":\"" + roomId + "\",\"size\":1000}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+        }
+    }
+
+    @Test
+    void refusesUploadTokenForOversizedFile() throws Exception {
+        try (Client owner = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+
+            assertThat(owner.request("{\"op\":\"upload\",\"room\":\"" + roomId + "\",\"size\":1000}")
+                    .get("op").asText())
+                    .as("посильный размер проходит — значит отказ ниже про размер")
+                    .isEqualTo("upload-ready");
+
+            JsonNode answer = owner.request("{\"op\":\"upload\",\"room\":\"" + roomId
+                    + "\",\"size\":999999999}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
+        }
+    }
+
+    @Test
     void handsWrappedKeyOnlyToItsOwner() throws Exception {
         try (Client owner = new Client(); Client stranger = new Client()) {
             String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")

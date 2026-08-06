@@ -123,6 +123,56 @@ class SweeperJobTest {
     }
 
     @Test
+    void sweepsExpiredFileWithItsBlob() throws IOException {
+        // Порядок обязателен: сначала блоб, потом строка. Обратный оставляет на диске
+        // вечный мусор, о котором больше никто не знает.
+        Path blob = blob("протухший");
+        Files.write(blob, new byte[8]);
+        jdbc.update("""
+                INSERT INTO file (id, room_id, uploader, size_bytes, created_at, expires_at)
+                VALUES ('протухший', 'room-a', 'dev', 8, 0, ?)
+                """, PAST);
+
+        sweeper.sweep();
+
+        assertThat(count("file")).isZero();
+        assertThat(Files.exists(blob)).as("блоб ушёл вместе со строкой").isFalse();
+    }
+
+    @Test
+    void keepsBlobOfLiveFile() throws IOException {
+        Path blob = blob("живой");
+        Files.write(blob, new byte[8]);
+        jdbc.update("""
+                INSERT INTO file (id, room_id, uploader, size_bytes, created_at, expires_at)
+                VALUES ('живой', 'room-a', 'dev', 8, 0, ?)
+                """, FUTURE);
+
+        sweeper.sweep();
+
+        assertThat(count("file")).isEqualTo(1);
+        assertThat(Files.exists(blob)).isTrue();
+    }
+
+    @Test
+    void scansForOrphanBlobsAtStartup() throws IOException {
+        // Каскад при удалении комнаты сносит строки, но про файловую систему не знает,
+        // и падение между записью тела и вставкой строки оставляет то же самое.
+        Path blob = blob("ничей");
+        Files.write(blob, new byte[8]);
+
+        sweeper.sweepOrphanBlobs();
+
+        assertThat(Files.exists(blob)).isFalse();
+    }
+
+    private Path blob(String id) throws IOException {
+        Path dir = DATA_DIR.resolve("blobs");
+        Files.createDirectories(dir);
+        return dir.resolve(id);
+    }
+
+    @Test
     void returnsSpaceWithoutFullVacuum() {
         // Полный VACUUM блокирует базу целиком и требует вдвое больше места на диске.
         // Место должен возвращать incremental_vacuum порциями — и не падать на пустой базе.

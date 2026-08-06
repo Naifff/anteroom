@@ -34,6 +34,19 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 .bubble{background:var(--surface);border-radius:16px;padding:9px 13px;font-size:15.5px;
   word-wrap:break-word;display:inline-block;max-width:83%}
 .bubble.bad{color:var(--ink-3);font-family:var(--mono);font-size:12.5px}
+.file{display:flex;flex-direction:column;gap:2px}
+.file .name{word-break:break-all}
+.file .meta{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+/* Оговорка стоит у каждого файла, а не один раз в справке: её место там, где человек
+   решает открывать. Антивирусная проверка при сквозном шифровании невозможна в принципе,
+   и умалчивать об этом нельзя. */
+.file .warn{font-size:11.5px;color:var(--ink-3);line-height:1.35}
+.file .get{margin-top:6px;align-self:flex-start;border:0;cursor:pointer;background:var(--surface-hi);
+  color:var(--ink);font-family:var(--sans);font-size:13px;padding:7px 12px;border-radius:10px}
+.file .get:disabled{color:var(--ink-3);cursor:default}
+.clip{width:36px;height:36px;flex:0 0 36px;border:0;border-radius:50%;cursor:pointer;
+  background:var(--surface-hi);color:var(--ink-2);display:grid;place-items:center;font-size:16px}
+.clip:disabled{color:var(--ink-3);cursor:default}
 
 .composer{margin:6px 12px calc(12px + env(safe-area-inset-bottom));background:var(--surface);
   border-radius:24px;padding:7px 7px 7px 14px;display:flex;align-items:center;gap:8px}
@@ -100,6 +113,8 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
   <form class="composer" id="composer">
     <input id="text" placeholder="Сообщение" autocomplete="off" disabled>
     <button type="button" class="ttl-pick" id="ttlPick" aria-label="Срок жизни">48 ч</button>
+    <button type="button" class="clip" id="attach" aria-label="Вложить файл" disabled>⎘</button>
+    <input type="file" id="file" class="hidden">
     <button class="icon" id="send" aria-label="Отправить" disabled>↑</button>
   </form>
   <div class="note" id="status">загрузка…</div>
@@ -190,6 +205,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 import { newSeed, keysFromSeed, saveSeed, loadSeed, saveServerKey, loadServerKey } from '/js/identity.js';
 import { seedToWords, wordsToSeed } from '/js/words.js';
 import { encryptSeed, decryptSeed } from '/js/keyfile.js';
+import { encryptFile, decryptFile, MAX_PLAINTEXT } from '/js/attach.js';
 
 await sodium.ready;
 
@@ -660,18 +676,118 @@ $('ttlPick').addEventListener('click', () => {
 // перерисовывается на месте, а не перезапрашивается. Перезапрос задваивал реплики.
 const shown = new Map();
 
+/**
+ * Конверт сообщения.
+ *
+ * Поле версии обязано быть с самого начала: без него смена криптосхемы ломает всё,
+ * что уже отправлено, и миграцию некуда зацепить. Вложение — тот же конверт, только
+ * вместо текста в нём ключ файла, имя и MIME-тип: в схеме БД их нет и быть не должно.
+ */
+const ENVELOPE_VERSION = 1;
+
+function textEnvelope(body) {
+  return JSON.stringify({ v: ENVELOPE_VERSION, t: 'text', body });
+}
+
+function fileEnvelope(id, key, file, size) {
+  return JSON.stringify({
+    v: ENVELOPE_VERSION, t: 'file', id,
+    key: sodium.to_base64(key, B64),
+    name: file.name,
+    mime: file.type || 'application/octet-stream',
+    size,
+  });
+}
+
 function fill(bubble, ciphertext) {
   bubble.classList.remove('bad');
+  bubble.textContent = '';
+
   if (!roomKey) {
     bubble.classList.add('bad');
     bubble.textContent = 'ключа комнаты нет — расшифровать нечем';
     return;
   }
+
+  let envelope;
   try {
-    bubble.textContent = open(ciphertext);
+    envelope = JSON.parse(open(ciphertext));
   } catch {
     bubble.classList.add('bad');
     bubble.textContent = 'не расшифровывается: ключ от другой эпохи или другой комнаты';
+    return;
+  }
+
+  if (envelope.v !== ENVELOPE_VERSION) {
+    bubble.classList.add('bad');
+    bubble.textContent = `сообщение формата ${envelope.v}, эта сборка знает только ${ENVELOPE_VERSION}`;
+    return;
+  }
+
+  if (envelope.t === 'file') {
+    drawFile(bubble, envelope);
+  } else {
+    bubble.textContent = envelope.body;
+  }
+}
+
+function humanSize(bytes) {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
+}
+
+function drawFile(bubble, envelope) {
+  const box = document.createElement('div');
+  box.className = 'file';
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = envelope.name;
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = humanSize(envelope.size);
+
+  const warn = document.createElement('div');
+  warn.className = 'warn';
+  warn.textContent = 'файл никто не проверял: сервер видит только шифротекст, и антивирус '
+    + 'при сквозном шифровании невозможен в принципе';
+
+  const get = document.createElement('button');
+  get.className = 'get';
+  get.textContent = 'Скачать';
+  get.addEventListener('click', () => download(envelope, get, meta));
+
+  box.append(name, meta, warn, get);
+  bubble.append(box);
+}
+
+/** Скачивание: шифротекст с сервера, расшифровка в памяти, blob-URL. */
+async function download(envelope, button, meta) {
+  button.disabled = true;
+  meta.textContent = `${humanSize(envelope.size)} · качаю…`;
+  try {
+    const response = await fetch(`/api/file/${encodeURIComponent(envelope.id)}`);
+    if (!response.ok) {
+      throw new Error(response.status === 404 ? 'файла больше нет: истёк срок' : 'сервер не отдал файл');
+    }
+    const ciphertext = new Uint8Array(await response.arrayBuffer());
+    const plain = decryptFile(ciphertext, sodium.from_base64(envelope.key, B64));
+
+    const url = URL.createObjectURL(new Blob([plain], { type: envelope.mime }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = envelope.name;
+    link.click();
+    // Ссылка на блоб держит копию файла в памяти вкладки, пока её не отозвать.
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+    meta.textContent = humanSize(envelope.size);
+  } catch (e) {
+    meta.textContent = `${humanSize(envelope.size)} · ${e.message}`;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -929,6 +1045,7 @@ async function connect() {
     $('status').textContent = 'в комнату — только по приглашению; сервер пока принимает любое устройство';
     $('text').disabled = false;
     $('send').disabled = false;
+    $('attach').disabled = false;
 
     // Свой X25519 — первым делом: без него участнику нечем обернуть ключ комнаты.
     ask({ op: 'hello', box: sodium.to_base64(keys.boxPublic, B64) });
@@ -952,8 +1069,15 @@ async function connect() {
     else if (frame.op === 'msg') render(frame);
     else if (frame.op === 'key') onKey(frame);
     else if (frame.op === 'redeemed') onRedeemed(frame);
+    else if (frame.op === 'upload-ready') {
+      uploadWaiting?.resolve(frame);
+      uploadWaiting = null;
+    }
     else if (frame.op === 'error') {
       if (frame.reason === 'нужно приглашение') createRefused = true;
+      // Отказ мог прийти на запрос пропуска — тогда ждать его дальше бессмысленно.
+      uploadWaiting?.reject(new Error(frame.reason));
+      uploadWaiting = null;
       $('status').textContent = frame.reason;
     }
   };
@@ -962,6 +1086,10 @@ async function connect() {
     $('status').textContent = 'связь потеряна, переподключаюсь…';
     $('text').disabled = true;
     $('send').disabled = true;
+    $('attach').disabled = true;
+    // Пропуск на загрузку с прошлого соединения уже не придёт.
+    uploadWaiting?.reject(new Error('связь потеряна'));
+    uploadWaiting = null;
     setTimeout(connect, 1000);
   };
 }
@@ -969,9 +1097,66 @@ async function connect() {
 $('composer').addEventListener('submit', (event) => {
   event.preventDefault();
   if (!$('text').value || !roomKey) return;
-  ask({ op: 'send', room: roomId, ciphertext: seal($('text').value),
+  ask({ op: 'send', room: roomId, ciphertext: seal(textEnvelope($('text').value)),
         ttl: TTL_CHOICES[ttlChoice].seconds });
   $('text').value = '';
+});
+
+/* ---------- вложения ---------- */
+
+// Пропуск на загрузку приезжает отдельным кадром, поэтому запрос ждёт ответа. Одна
+// загрузка за раз: параллельные пришлось бы различать по id, а выигрыш нулевой.
+let uploadWaiting = null;
+
+function askUploadToken(size) {
+  return new Promise((resolve, reject) => {
+    uploadWaiting = { resolve, reject };
+    ask({ op: 'upload', room: roomId, size, ttl: TTL_CHOICES[ttlChoice].seconds });
+  });
+}
+
+$('attach').addEventListener('click', () => $('file').click());
+
+$('file').addEventListener('change', async () => {
+  const file = $('file').files[0];
+  $('file').value = '';
+  if (!file || !roomKey) return;
+
+  if (file.size > MAX_PLAINTEXT) {
+    $('status').textContent = `${file.name} больше 20 МБ — сервер такой не примет`;
+    return;
+  }
+
+  $('attach').disabled = true;
+  try {
+    $('status').textContent = `${file.name}: шифрую…`;
+    const plain = new Uint8Array(await file.arrayBuffer());
+    // Ключ случайный на каждый файл. В сообщение он попадёт вместе с именем и типом —
+    // всё это уже под ключом комнаты, и на сервере остаётся только размер и время.
+    const { key, ciphertext } = encryptFile(plain);
+
+    $('status').textContent = `${file.name}: отправляю…`;
+    const permit = await askUploadToken(ciphertext.length);
+
+    // Пропуск заголовком, а не параметром запроса: параметры попадают в access.log.
+    const response = await fetch('/api/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Upload-Token': permit.token },
+      body: ciphertext,
+    });
+    if (!response.ok) {
+      throw new Error(response.status === 413 ? 'файл больше, чем принимает сервер' : 'сервер не принял файл');
+    }
+
+    ask({ op: 'send', room: roomId, ttl: TTL_CHOICES[ttlChoice].seconds,
+          ciphertext: seal(fileEnvelope(permit.id, key, file, plain.length)) });
+    $('status').textContent = '';
+  } catch (e) {
+    $('status').textContent = `${file.name}: ${e.message}`;
+  } finally {
+    uploadWaiting = null;
+    $('attach').disabled = false;
+  }
 });
 
 readLink();

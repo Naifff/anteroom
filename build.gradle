@@ -46,3 +46,17 @@ bootJar {
 test {
     useJUnitPlatform()
 }
+
+// Селф-тесты на JS живут в src/test/resources/browser и в jar попадать не должны.
+// Открывать их надо с того же origin, что и /js/ с /vendor/, иначе import не разрешится, —
+// поэтому bootRun раздаёт их из отдельного каталога сборки, а bootJar о нём не знает.
+tasks.register('stageBrowserTests', Copy) {
+    from 'src/test/resources/browser'
+    into layout.buildDirectory.dir('browser-tests/browser')
+}
+
+bootRun {
+    dependsOn 'stageBrowserTests'
+    systemProperty 'spring.web.resources.static-locations',
+            'classpath:/static/,file:' + layout.buildDirectory.dir('browser-tests').get().asFile.path + '/'
+}
