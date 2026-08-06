@@ -221,8 +221,9 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         requireMember(roomId, device);
 
         byte[] ciphertext = Base64.getDecoder().decode(frame.path("ciphertext").asText());
-        Room room = rooms.find(roomId);
-        StoredMessage saved = messages.save(roomId, device, room.keyEpoch(), ciphertext, room.defaultTtl());
+        // Срок — то, что попросил отправитель; зажимает его MessageService.
+        Long requested = frame.hasNonNull("ttl") ? frame.get("ttl").asLong() : null;
+        StoredMessage saved = messages.save(rooms.find(roomId), device, ciphertext, requested);
 
         // Отправителю тоже: его вкладка рисует сообщение по подтверждению с id, а не сразу,
         // иначе после реконнекта оно задвоится с тем, что придёт из догрузки.
@@ -276,6 +277,9 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         frame.put("id", message.id());
         frame.put("sender", message.sender());
         frame.put("epoch", message.epoch());
+        // Абсолютный дедлайн, а не остаток: вкладка может простоять в фоне сколько угодно,
+        // и пересчитывать остаток от момента доставки нельзя.
+        frame.put("expiresAt", message.expiresAt());
         frame.put("ciphertext", Base64.getEncoder().encodeToString(message.ciphertext()));
         write(session, frame);
     }

@@ -43,6 +43,14 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 .icon{width:36px;height:36px;flex:0 0 36px;border:0;border-radius:50%;cursor:pointer;
   background:var(--ink);color:var(--bg);display:grid;place-items:center;font-size:15px}
 .icon:disabled{background:var(--surface-hi);color:var(--ink-3);cursor:default}
+.ttl-pick{border:0;cursor:pointer;background:var(--surface-hi);color:var(--ink-2);
+  font-family:var(--mono);font-size:11.5px;padding:7px 10px;border-radius:999px;white-space:nowrap}
+/* Угасание в абсолютном времени: последние десять минут независимо от того, был срок
+   час или пять суток. В доле от срока долгоживущее висело бы полупрозрачным двое суток
+   и выглядело поломкой. */
+.msg{transition:opacity .8s linear}
+.msg.fading{opacity:.45}
+.ttl-tag{font-family:var(--mono);font-size:10px;color:var(--ink-3);padding:3px 4px 0}
 .note{text-align:center;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);padding:0 20px 10px;line-height:1.5}
 
 .backdrop{position:absolute;inset:0;z-index:8;background:rgba(15,14,13,.62);
@@ -91,6 +99,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 
   <form class="composer" id="composer">
     <input id="text" placeholder="Сообщение" autocomplete="off" disabled>
+    <button type="button" class="ttl-pick" id="ttlPick" aria-label="Срок жизни">48 ч</button>
     <button class="icon" id="send" aria-label="Отправить" disabled>↑</button>
   </form>
   <div class="note" id="status">загрузка…</div>
@@ -632,6 +641,21 @@ function open(payload) {
 
 const cards = new Map();
 
+// Сроки как в README: пять минут, час, сутки, двое суток, пять суток. По умолчанию 48 ч.
+const TTL_CHOICES = [
+  { seconds: 300, label: '5 мин' },
+  { seconds: 3600, label: '1 ч' },
+  { seconds: 86400, label: '24 ч' },
+  { seconds: 172800, label: '48 ч' },
+  { seconds: 432000, label: '5 сут' },
+];
+let ttlChoice = 3;
+
+$('ttlPick').addEventListener('click', () => {
+  ttlChoice = (ttlChoice + 1) % TTL_CHOICES.length;
+  $('ttlPick').textContent = TTL_CHOICES[ttlChoice].label;
+});
+
 // Шифротекст держим при строке: когда ключ комнаты приедет обёрткой, лента
 // перерисовывается на месте, а не перезапрашивается. Перезапрос задваивал реплики.
 const shown = new Map();
@@ -670,10 +694,30 @@ function render(frame) {
   fill(bubble, frame.ciphertext);
 
   row.append(who, bubble);
-  shown.set(frame.id, { bubble, ciphertext: frame.ciphertext, sender: frame.sender, who });
+  shown.set(frame.id, { row, bubble, ciphertext: frame.ciphertext, sender: frame.sender, who,
+    expiresAt: frame.expiresAt });
   $('feed').append(row);
   $('feed').scrollTop = $('feed').scrollHeight;
 }
+
+/** Последние десять минут жизни — независимо от того, был срок час или пять суток. */
+const FADE_BEFORE_MS = 600000;
+
+function tickExpiry() {
+  const now = Date.now();
+  for (const [id, entry] of shown) {
+    const left = entry.expiresAt - now;
+    if (left <= 0) {
+      // Сервер это сообщение уже не отдаёт; открытая вкладка не должна показывать его
+      // дольше, чем оно живёт.
+      entry.row.remove();
+      shown.delete(id);
+      continue;
+    }
+    entry.row.classList.toggle('fading', left < FADE_BEFORE_MS);
+  }
+}
+setInterval(tickExpiry, 1000);
 
 function redraw() {
   for (const entry of shown.values()) {
@@ -925,7 +969,8 @@ async function connect() {
 $('composer').addEventListener('submit', (event) => {
   event.preventDefault();
   if (!$('text').value || !roomKey) return;
-  ask({ op: 'send', room: roomId, ciphertext: seal($('text').value) });
+  ask({ op: 'send', room: roomId, ciphertext: seal($('text').value),
+        ttl: TTL_CHOICES[ttlChoice].seconds });
   $('text').value = '';
 });
 

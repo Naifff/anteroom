@@ -1,6 +1,7 @@
 package org.anteroom.message;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -13,6 +14,7 @@ import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.List;
 
+import org.anteroom.room.Room;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,8 +64,8 @@ class MessageServiceTest {
 
     @Test
     void returnsSavedMessagesInSendOrder() {
-        messages.save(ROOM, "device-1", 1, "первое".getBytes(), 60);
-        messages.save(ROOM, "device-2", 1, "второе".getBytes(), 60);
+        messages.save(room(60, 60), "device-1", "первое".getBytes(), null);
+        messages.save(room(60, 60), "device-2", "второе".getBytes(), null);
 
         assertThat(messages.since(ROOM, 0))
                 .extracting(m -> new String(m.ciphertext()))
@@ -74,7 +76,7 @@ class MessageServiceTest {
     void hidesExpiredMessageBeforeSweeperRuns() {
         // Гипотеза фазы 1: протухшее не отдаётся благодаря фильтру при чтении, а не потому
         // что sweeper успел. Между тиками сервер обязан молчать о просроченном.
-        messages.save(ROOM, "device-1", 1, "минутка".getBytes(), 60);
+        messages.save(room(60, 60), "device-1", "минутка".getBytes(), null);
 
         clock.advance(Duration.ofSeconds(61));
 
@@ -86,7 +88,7 @@ class MessageServiceTest {
 
     @Test
     void keepsMessageUntilItsDeadline() {
-        messages.save(ROOM, "device-1", 1, "минутка".getBytes(), 60);
+        messages.save(room(60, 60), "device-1", "минутка".getBytes(), null);
 
         clock.advance(Duration.ofSeconds(59));
 
@@ -95,8 +97,8 @@ class MessageServiceTest {
 
     @Test
     void returnsOnlyMessagesNewerThanLastSeen() {
-        long first = messages.save(ROOM, "device-1", 1, "первое".getBytes(), 60).id();
-        messages.save(ROOM, "device-1", 1, "второе".getBytes(), 60);
+        long first = messages.save(room(60, 60), "device-1", "первое".getBytes(), null).id();
+        messages.save(room(60, 60), "device-1", "второе".getBytes(), null);
 
         assertThat(messages.since(ROOM, first))
                 .extracting(m -> new String(m.ciphertext()))
@@ -105,16 +107,16 @@ class MessageServiceTest {
 
     @Test
     void doesNotLeakBetweenRooms() {
-        messages.save(OTHER_ROOM, "device-1", 1, "чужое".getBytes(), 60);
+        messages.save(otherRoom(), "device-1", "чужое".getBytes(), null);
 
         assertThat(messages.since(ROOM, 0)).isEmpty();
     }
 
     @Test
     void sweepDeletesExpiredAndKeepsLive() {
-        messages.save(ROOM, "device-1", 1, "старое".getBytes(), 60);
+        messages.save(room(60, 60), "device-1", "старое".getBytes(), null);
         clock.advance(Duration.ofSeconds(61));
-        messages.save(ROOM, "device-1", 1, "свежее".getBytes(), 60);
+        messages.save(room(60, 60), "device-1", "свежее".getBytes(), null);
 
         int deleted = messages.sweepExpired();
 
@@ -124,11 +126,75 @@ class MessageServiceTest {
                 .containsExactly("свежее");
     }
 
+    private static Room room(long defaultTtl, long maxTtl) {
+        return new Room(ROOM, 1, defaultTtl, maxTtl, 1, 0);
+    }
+
+    private static Room otherRoom() {
+        return new Room(OTHER_ROOM, 1, 60, 60, 1, 0);
+    }
+
+    @Test
+    void clampsTtlToRoomCeiling() {
+        // Значение приходит от клиента, поэтому верить ему нельзя: пятидневный потолок
+        // держится низким сознательно, и обойти его присланным числом невозможно.
+        messages.save(room(3600, 3600), "device-1", "долгожитель".getBytes(), 999_999L);
+
+        clock.advance(Duration.ofSeconds(3601));
+
+        assertThat(messages.since(ROOM, 0)).isEmpty();
+    }
+
+    @Test
+    void clampsTtlToFloor() {
+        messages.save(room(3600, 3600), "device-1", "мгновение".getBytes(), 1L);
+
+        clock.advance(Duration.ofSeconds(59));
+
+        assertThat(messages.since(ROOM, 0)).as("минута — пол, ниже сервер не опускает").hasSize(1);
+    }
+
+    @Test
+    void honoursTtlInsideAllowedRange() {
+        messages.save(room(172_800, 432_000), "device-1", "на час".getBytes(), 3600L);
+
+        clock.advance(Duration.ofSeconds(3599));
+        assertThat(messages.since(ROOM, 0)).hasSize(1);
+
+        clock.advance(Duration.ofSeconds(2));
+        assertThat(messages.since(ROOM, 0)).isEmpty();
+    }
+
+    @Test
+    void fallsBackToRoomDefaultWhenSenderSaysNothing() {
+        messages.save(room(3600, 432_000), "device-1", "молча".getBytes(), null);
+
+        clock.advance(Duration.ofSeconds(3601));
+
+        assertThat(messages.since(ROOM, 0)).isEmpty();
+    }
+
+    @Test
+    void refusesCiphertextOverLimit() {
+        // 64 КБ — потолок реплики. Без него один кадр забивает и базу, и рассылку.
+        byte[] tooBig = new byte[MessageService.MAX_CIPHERTEXT + 1];
+
+        assertThatThrownBy(() -> messages.save(room(3600, 3600), "device-1", tooBig, null))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void acceptsCiphertextExactlyAtLimit() {
+        byte[] atLimit = new byte[MessageService.MAX_CIPHERTEXT];
+
+        assertThat(messages.save(room(3600, 3600), "device-1", atLimit, null).id()).isPositive();
+    }
+
     @Test
     void livesAsLongAsTheRoomSays() {
         // Срок берётся из настроек комнаты, а не из константы: раз комната его хранит,
         // игнорировать его — значит держать в схеме поле-обманку.
-        messages.save(ROOM, "device-1", 1, "долгое".getBytes(), 3600);
+        messages.save(room(3600, 3600), "device-1", "долгое".getBytes(), null);
 
         clock.advance(Duration.ofSeconds(120));
 
@@ -139,7 +205,7 @@ class MessageServiceTest {
     void restartDoesNotResurrectExpiredMessages() {
         // Хранится абсолютный дедлайн, а не остаток TTL: простой сервера в жизни
         // сообщения не участвует. Новый MessageService поверх той же базы — модель рестарта.
-        messages.save(ROOM, "device-1", 1, "старое".getBytes(), 60);
+        messages.save(room(60, 60), "device-1", "старое".getBytes(), null);
         clock.advance(Duration.ofSeconds(61));
 
         MessageService afterRestart = new MessageService(jdbc, clock);

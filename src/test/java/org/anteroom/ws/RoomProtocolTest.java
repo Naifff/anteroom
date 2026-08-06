@@ -121,6 +121,42 @@ class RoomProtocolTest {
             JsonNode delivered = guest.awaitOp("msg");
             assertThat(delivered.get("ciphertext").asText()).isEqualTo("0J/RgNC40LLQtdGC");
             assertThat(delivered.get("sender").asText()).isEqualTo(owner.publicKey());
+            // Дедлайн нужен вкладке, чтобы гасить реплику и убирать её из ленты: сервер
+            // её уже не отдаёт, а открытая вкладка иначе показывает вечно.
+            assertThat(delivered.get("expiresAt").asLong()).isGreaterThan(System.currentTimeMillis());
+        }
+    }
+
+    @Test
+    void clampsTtlAskedBySender() throws Exception {
+        // Сервер зажимает присланное значение: потолок комнаты нельзя обойти кадром.
+        try (Client owner = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":3600}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+
+            owner.send("{\"op\":\"send\",\"room\":\"" + roomId
+                    + "\",\"ciphertext\":\"AQID\",\"ttl\":999999}");
+
+            long deadline = owner.awaitOp("msg").get("expiresAt").asLong();
+            assertThat(deadline).isLessThanOrEqualTo(System.currentTimeMillis() + 3600 * 1000 + 5000);
+        }
+    }
+
+    @Test
+    void refusesMessageOverSizeLimit() throws Exception {
+        try (Client owner = new Client()) {
+            String roomId = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}")
+                    .get("room").asText();
+            owner.send("{\"op\":\"enter\",\"room\":\"" + roomId + "\",\"since\":0}");
+            owner.drain();
+
+            String huge = Base64.getEncoder().encodeToString(new byte[70 * 1024]);
+            JsonNode answer = owner.request(
+                    "{\"op\":\"send\",\"room\":\"" + roomId + "\",\"ciphertext\":\"" + huge + "\"}");
+
+            assertThat(answer.get("op").asText()).isEqualTo("error");
         }
     }
 
