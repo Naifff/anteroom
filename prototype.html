@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Вылазка — прототип</title>
+<style>
+:root{
+  --bg:#191817; --surface:#211F1E; --surface-hi:#2B2827;
+  --ink:#E8E4DF; --ink-2:#8C8681; --ink-3:#5A5451; --ember:#D9542F;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+  font-size:16px;line-height:1.45;-webkit-font-smoothing:antialiased;display:flex;justify-content:center}
+.app{width:100%;max-width:560px;height:100dvh;display:flex;flex-direction:column;position:relative;overflow:hidden}
+
+.top{position:absolute;top:0;left:0;right:0;z-index:5;padding:14px 16px 34px;
+  display:flex;align-items:center;gap:8px;
+  background:linear-gradient(to bottom,var(--bg) 42%,rgba(25,24,23,0));pointer-events:none}
+.top > *{pointer-events:auto}
+.room{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-right:auto}
+.chip{font-family:var(--mono);font-size:12px;color:var(--ink-2);background:var(--surface);
+  padding:6px 11px;border-radius:999px;white-space:nowrap;border:0}
+.chip b{color:var(--ink);font-weight:600}
+button.chip{cursor:pointer}
+button.chip[aria-pressed="true"]{color:var(--ink);background:var(--surface-hi)}
+
+.feed{flex:1;overflow-y:auto;padding:74px 16px 8px;display:flex;flex-direction:column;gap:2px;scrollbar-width:none}
+.feed::-webkit-scrollbar{display:none}
+.edge{text-align:center;font-family:var(--mono);font-size:11px;letter-spacing:.04em;
+  color:var(--ink-3);padding:4px 0 26px;
+  -webkit-mask-image:linear-gradient(to bottom,transparent,#000 90%);
+  mask-image:linear-gradient(to bottom,transparent,#000 90%)}
+
+.msg{display:flex;gap:10px;align-items:flex-start;padding-top:12px;
+  transition:opacity .8s linear,filter .8s linear}
+.msg.tight{padding-top:3px}
+.msg.mine{justify-content:flex-end}
+.slot{width:29px;flex:0 0 29px;padding-top:2px}
+.who{display:flex;align-items:baseline;gap:7px;margin-bottom:3px}
+.name{font-size:13px;font-weight:600;color:var(--ink-2)}
+.body{max-width:83%}
+.mine .body{max-width:80%}
+.bubble{background:var(--surface);border-radius:16px;padding:9px 13px;font-size:15.5px;
+  letter-spacing:-.005em;word-wrap:break-word}
+.mine .bubble{background:var(--surface-hi);border-radius:16px 16px 5px 16px}
+.left-run .bubble{border-radius:5px 16px 16px 16px}
+.tight .bubble{border-radius:16px}
+.mine.tight .bubble{border-radius:16px 5px 5px 16px}
+.meta{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);padding:4px 4px 0;
+  text-align:right;opacity:0;transition:opacity .5s}
+.meta.show{opacity:1}
+.ttl-tag{font-family:var(--mono);font-size:10px;color:var(--ink-3);padding:3px 4px 0;text-align:right}
+
+.card-btn{border:0;padding:0;background:none;cursor:pointer;display:block;border-radius:9px}
+.card-btn:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
+
+.verify{margin:8px 0 0 39px;background:var(--surface);border-radius:14px;padding:13px 14px;max-width:83%;
+  display:flex;gap:13px;align-items:flex-start}
+.verify h4{margin:0 0 7px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.verify .words{font-family:var(--mono);font-size:13.5px;line-height:1.65}
+.verify p{margin:8px 0 0;font-size:12.5px;color:var(--ink-3);line-height:1.4}
+
+.words.masked{filter:blur(5px);opacity:.5;user-select:none;pointer-events:none}
+.reveal{margin-top:9px;border:0;cursor:pointer;background:var(--surface-hi);color:var(--ink-2);
+  font-family:var(--sans);font-size:12.5px;padding:6px 12px;border-radius:999px}
+.reveal:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
+
+.file{display:flex;align-items:center;gap:11px;background:var(--surface);border-radius:16px;padding:11px 14px}
+.file .glyph{width:26px;height:26px;flex:0 0 26px;border-radius:7px;background:var(--surface-hi);
+  display:grid;place-items:center;font-family:var(--mono);font-size:9px;color:var(--ink-2)}
+.file .fname{font-size:14.5px}
+.file .fsize{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:1px}
+
+.once{background:var(--surface);border-radius:16px;padding:13px 14px}
+.once h4{margin:0;font-size:14.5px;font-weight:600}
+.once p{margin:5px 0 0;font-size:12.5px;color:var(--ink-2);line-height:1.4}
+.burn{margin-top:11px;width:100%;border:0;cursor:pointer;background:var(--ember);color:#fff;
+  font-family:var(--sans);font-size:14px;font-weight:600;padding:9px 14px;border-radius:11px}
+.once.revealed{background:var(--surface-hi)}
+.once .payload{font-family:var(--mono);font-size:13px;word-break:break-all;line-height:1.5;margin-top:8px}
+.ash{font-family:var(--mono);font-size:12px;color:var(--ink-3);padding:2px 0}
+
+.me-chip{display:flex;align-items:center;gap:7px;border:0;cursor:pointer;background:var(--surface);
+  padding:4px 11px 4px 4px;border-radius:999px;font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.me-chip b{color:var(--ink);font-weight:600}
+.me-chip .nm{font-family:var(--sans);font-size:12.5px;color:var(--ink)}
+@media (max-width:400px){.me-chip .nm{display:none}}
+
+.backdrop{position:absolute;inset:0;z-index:8;background:rgba(15,14,13,.62);
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.sheet{position:absolute;left:12px;right:12px;bottom:12px;z-index:9;background:var(--surface);
+  border-radius:22px;padding:18px 18px 16px}
+.sheet .hd{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.sheet .hd .t1{font-size:17px;font-weight:600;letter-spacing:-.01em}
+.sheet .hd .t2{font-family:var(--mono);font-size:11.5px;color:var(--ink-3);margin-top:2px}
+.sheet .fprow{display:flex;gap:13px;align-items:flex-start;padding-top:14px}
+.sheet h4{margin:0 0 7px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.sheet .words{font-family:var(--mono);font-size:13.5px;line-height:1.65}
+.sheet p{margin:8px 0 0;font-size:12.5px;color:var(--ink-3);line-height:1.4}
+.sheet .demo{display:flex;align-items:center;gap:10px;margin-top:18px;padding-top:14px}
+.sheet .demo span{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);line-height:1.45}
+.words.masked{filter:blur(5px);opacity:.5;user-select:none;pointer-events:none}
+.reveal{margin-top:9px;border:0;cursor:pointer;background:var(--surface-hi);color:var(--ink-2);
+  font-family:var(--sans);font-size:12.5px;padding:6px 12px;border-radius:999px}
+.reveal:focus-visible,.me-chip:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
+
+.tabs{display:flex;gap:4px;margin-right:auto}
+.tab{border:0;cursor:pointer;background:none;color:var(--ink-3);font-family:var(--sans);
+  font-size:16px;font-weight:600;letter-spacing:-.01em;padding:5px 11px;border-radius:999px;
+  display:flex;align-items:center;gap:6px}
+.tab[aria-selected="true"]{color:var(--ink);background:var(--surface)}
+.tab .dot{width:5px;height:5px;border-radius:50%;background:var(--ember)}
+.tab:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
+
+.thread{display:flex;align-items:center;gap:12px;width:100%;border:0;cursor:pointer;
+  background:none;padding:11px 8px;border-radius:14px;text-align:left;font-family:var(--sans)}
+.thread:active{background:var(--surface)}
+.thread:focus-visible{outline:2px solid var(--ink-2);outline-offset:-2px}
+.thread .tn{font-size:15px;font-weight:600;letter-spacing:-.005em}
+.thread .tp{font-size:13.5px;color:var(--ink-2);margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:62vw}
+.thread .tt{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);white-space:nowrap}
+.empty{color:var(--ink-3);font-size:13.5px;text-align:center;padding:40px 30px;line-height:1.5}
+
+.back{display:flex;align-items:center;gap:9px;border:0;cursor:pointer;background:none;
+  color:var(--ink);font-family:var(--sans);font-size:16px;font-weight:600;padding:5px 6px;
+  border-radius:999px;margin-right:auto;letter-spacing:-.01em}
+.back:active{background:var(--surface)}
+.back .arr{color:var(--ink-2);font-size:19px;line-height:1}
+.private-note{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);text-align:center;
+  padding:2px 0 14px}
+
+.composer{margin:6px 12px calc(12px + env(safe-area-inset-bottom));background:var(--surface);
+  border-radius:24px;padding:7px 7px 7px 14px;display:flex;align-items:center;gap:8px}
+.composer input{flex:1;background:none;border:0;outline:none;color:var(--ink);font-family:var(--sans);
+  font-size:16px;padding:8px 0;min-width:0}
+.composer input::placeholder{color:var(--ink-3)}
+.ttl-pick{border:0;cursor:pointer;background:var(--surface-hi);color:var(--ink-2);
+  font-family:var(--mono);font-size:11.5px;padding:7px 10px;border-radius:999px;white-space:nowrap}
+.icon{width:36px;height:36px;flex:0 0 36px;border:0;border-radius:50%;cursor:pointer;
+  background:var(--surface-hi);color:var(--ink-2);display:grid;place-items:center;font-size:17px}
+.icon.send{background:var(--ink);color:var(--bg);font-size:15px}
+.icon:focus-visible,.ttl-pick:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
+.note{text-align:center;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);padding:0 20px 10px;line-height:1.5}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="top">
+    <div class="tabs" id="tabs">
+      <button class="tab" id="tabRoom" aria-selected="true">Вылазка</button>
+      <button class="tab" id="tabDm" aria-selected="false">Личное<span class="dot"></span></button>
+    </div>
+    <button class="back" id="back" hidden><span class="arr">‹</span><span id="backName"></span></button>
+    <button class="me-chip" id="meChip"><span id="meCard"></span><span class="nm" id="meNameShort"></span><span><b>8</b>/52</span></button>
+  </div>
+
+  <div class="feed" id="feed"></div>
+
+  <div class="composer">
+    <button class="icon" aria-label="Прикрепить файл">+</button>
+    <input id="input" placeholder="Написать" aria-label="Написать сообщение">
+    <button class="ttl-pick" id="ttlPick">48 ч</button>
+    <button class="icon send" id="send" aria-label="Отправить">↑</button>
+  </div>
+
+  <div class="backdrop" id="backdrop" hidden></div>
+  <div class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-label="Ваша карта">
+    <div class="hd">
+      <span id="sheetCard"></span>
+      <div><div class="t1">Вы — <span id="meName"></span></div><div class="t2">мест занято 8 из 52</div></div>
+    </div>
+    <div class="fprow">
+      <span id="meFp"></span>
+      <div>
+        <h4>Ваш отпечаток</h4>
+        <div class="words masked" id="meWords"></div>
+        <button class="reveal" id="meReveal">Показать на 15 секунд</button>
+        <p>Карту назначает сервер, поэтому доверять нужно отпечатку. Продиктуйте эти слова тому, кто должен убедиться, что это вы.</p>
+      </div>
+    </div>
+    <div class="demo">
+      <button class="chip" id="speed" aria-pressed="false">×1</button>
+      <span>Прототип: угасание за минуту до конца, в бою — за десять.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- колода ---------- */
+const RANKS=["туз","король","дама","валет","десятка","девятка","восьмёрка","семёрка","шестёрка","пятёрка","четвёрка","тройка","двойка"];
+const RANK_SHORT=["Т","К","Д","В","10","9","8","7","6","5","4","3","2"];
+const SUITS=[
+ {gen:"пик",   path:'M12 2C12 2 21 9 21 14.2 21 17.2 18.8 19 16.6 19 14.9 19 13.6 18.1 12.9 17 13.1 19 13.8 20.6 15 22L9 22C10.2 20.6 10.9 19 11.1 17 10.4 18.1 9.1 19 7.4 19 5.2 19 3 17.2 3 14.2 3 9 12 2 12 2Z'},
+ {gen:"червей",path:'M12 21S3 14.5 3 8.8C3 5.6 5.4 3.5 8.1 3.5 9.9 3.5 11.3 4.5 12 5.8 12.7 4.5 14.1 3.5 15.9 3.5 18.6 3.5 21 5.6 21 8.8 21 14.5 12 21 12 21Z'},
+ {gen:"бубён", path:'M12 2 20.5 12 12 22 3.5 12Z'},
+ {gen:"треф",  path:'M12 2.5A4.4 4.4 0 0 1 15.4 9.6 4.4 4.4 0 1 1 16.9 17.6 4.6 4.6 0 0 1 13.4 15.4C13.4 18.4 14 20.6 15 22L9 22C10 20.6 10.6 18.4 10.6 15.4A4.6 4.6 0 0 1 7.1 17.6 4.4 4.4 0 1 1 8.6 9.6 4.4 4.4 0 0 1 12 2.5Z'}
+];
+const cardName=i=>RANKS[i%13]+" "+SUITS[(i/13)|0].gen;
+
+function cardTile(i,px){
+  const r=RANK_SHORT[i%13], s=SUITS[(i/13)|0], two=r.length>1;
+  return `<svg width="${px}" height="${px}" viewBox="0 0 29 29" aria-hidden="true">
+    <rect width="29" height="29" rx="9" fill="#2B2827"/>
+    <text x="14.5" y="13.6" text-anchor="middle" fill="#E8E4DF" font-family="ui-monospace,Menlo,monospace"
+      font-size="${two?10:12.5}" font-weight="600">${r}</text>
+    <g transform="translate(10.4,15.4) scale(.345)"><path d="${s.path}" fill="#E8E4DF" opacity=".72"/></g>
+  </svg>`;
+}
+
+/* ---------- отпечаток: hash → геометрия ---------- */
+function hash(s){let h=2166136261>>>0;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)>>>0}return h}
+function fingerprint(key,px){
+  const h=hash(key),h2=hash(key+"·2"),bits=[];
+  for(let i=0;i<15;i++)bits.push(((i<8?h>>>i:h2>>>(i-8))&1)===1?((i%3===0)?2:1):0);
+  let c="";
+  for(let y=0;y<5;y++)for(let x=0;x<3;x++){
+    const v=bits[y*3+x]; if(!v)continue;
+    for(const cx of new Set([x,4-x])){
+      const X=cx*5.6+1.4,Y=y*5.6+1.4;
+      c+= v===2?`<rect x="${X}" y="${Y}" width="4.2" height="4.2" rx="1.1" fill="#E8E4DF" opacity=".82"/>`
+               :`<circle cx="${X+2.1}" cy="${Y+2.1}" r="1.5" fill="#E8E4DF" opacity=".38"/>`;
+    }
+  }
+  return `<svg width="${px}" height="${px}" viewBox="0 0 29 29" aria-hidden="true"><rect width="29" height="29" rx="9" fill="#2B2827"/>${c}</svg>`;
+}
+const WORDS=["якорь","сосна","гравий","мох","ветер","камень","лиман","солод","тропа","иней","ольха","бруствер","сумерки","кремень","овраг","затон"];
+const phrase=k=>{const h=hash(k+"·v");return [0,1,2,3].map(i=>WORDS[(h>>>(i*4))&15]).join(" ")};
+
+/* ---------- участники: карта случайна и ничего не означает ---------- */
+const P={
+  p1:{card:19,key:"k7f2a"},
+  p2:{card:41,key:"m3b9c"},
+  p3:{card:7, key:"q8d1e"},
+  p4:{card:3, key:"z2h6t"},
+  p5:{card:30,key:"r5c4x"},
+  p6:{card:50,key:"w9k3p"},
+  p7:{card:22,key:"n1v7s"},
+  me:{card:32,key:"b4t8u",mine:true}
+};
+Object.values(P).forEach(p=>p.name=cardName(p.card));
+
+/* ---------- сообщения ---------- */
+let seq=0;
+const M=[
+  {who:"p1",   text:"Так, суббота. Кто вообще едет?",life:600},
+  {who:"p2", text:"Я. Но если снова дождь — разворачиваюсь на первой остановке.",life:600},
+  {who:"p3",  text:"Едем. Палатку беру я, она на четверых.",life:560},
+  {who:"p5",text:"Скинул карту, там отмечен брод и где встать на ночь.",life:520},
+  {who:"p5",file:{name:"маршрут.pdf",size:"4,2 МБ"},life:520},
+  {who:"p4", text:"Машина моя, значит по местам.",life:470},
+  {who:"p4", text:"Влезет пятеро, шестой уже с рюкзаком на коленях.",life:465},
+  {who:"p4", text:"Выезд от заправки, не от дома.",life:460},
+  {who:"p4", text:"И бензин пополам, я не благотворительность.",life:455},
+  {who:"me",    text:"Шестым буду я, мне норм.",life:400},
+  {who:"p6",   text:"Ключ от домика — одноразовой ссылкой, откроет кто первый приедет.",life:350},
+  {who:"p6",   once:{payload:"база-14 · код 8830 · калитка со стороны леса"},life:345},
+  {who:"p7",text:"Во сколько выезжаем?",life:200},
+  {who:"p1",   text:"В семь.",life:150}
+];
+
+/* ---------- личные сообщения ---------- */
+const DM=[
+  {thread:"p2",who:"p2",text:"Слушай, по деньгам за домик — я пока не могу закинуть.",life:500},
+  {thread:"p2",who:"me",text:"Не горит, скинешь после поездки.",life:480},
+  {thread:"p2",who:"p2",text:"Спасибо. В общий чат не хочу это тащить.",life:460},
+  {thread:"p7",who:"me",text:"Ты вообще едешь или как обычно?",life:300},
+  {thread:"p7",who:"p7",text:"Еду. В этот раз точно.",life:280}
+];
+
+/* ---------- часы ---------- */
+let vClock=0,mult=1;
+setInterval(()=>{vClock+=0.25*mult;tick()},250);
+const FADE_WINDOW=60;           // в бою — 600 секунд
+
+const feed=document.getElementById('feed');
+const state=[];
+let view='room', peer=null;   // room | dm | thread
+const TTLS=[{l:"5 мин",s:300},{l:"1 ч",s:3600},{l:"48 ч",s:172800},{l:"5 сут",s:432000}];
+let ttlIdx=2;
+
+const esc=s=>s.replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+function el(h){const d=document.createElement('div');d.innerHTML=h.trim();return d.firstChild}
+
+function render(){
+  document.getElementById('tabs').hidden = view==='thread';
+  document.getElementById('back').hidden = view!=='thread';
+  document.getElementById('tabRoom').setAttribute('aria-selected',view==='room');
+  document.getElementById('tabDm').setAttribute('aria-selected',view==='dm');
+  document.querySelector('.composer').style.display = view==='dm'?'none':'flex';
+  if(view==='thread') document.getElementById('backName').textContent=P[peer].name;
+  document.getElementById('input').placeholder = view==='thread'?'Написать лично':'Написать';
+  if(view==='dm'){renderThreads();return}
+
+  const key = view==='room'?'room':peer;
+  feed.innerHTML = view==='room'
+    ? '<div class="edge">старше пяти суток стёрто</div>'
+    : '<div class="private-note">видно только вам двоим</div>';
+  let prev=null,run=0;
+  state.filter(m=>m.thread===key).forEach(m=>{
+    const p=P[m.who];
+    const same=prev===m.who;
+    run=same?run+1:0;
+    const header=!same||run%4===0;          // имя возвращается каждые 4 реплики
+    const node=el(`<div class="msg ${p.mine?'mine':''} ${same?'tight':''} ${!p.mine&&same&&!header?'left-run':''}"></div>`);
+
+    if(!p.mine){
+      const slot=el(`<div class="slot"></div>`);
+      if(header){
+        const b=el(`<button class="card-btn" aria-label="Проверить отпечаток: ${p.name}">${cardTile(p.card,29)}</button>`);
+        b.onclick=()=>toggleVerify(m.id);
+        slot.appendChild(b);
+      }
+      node.appendChild(slot);
+    }
+    const body=el(`<div class="body"></div>`);
+    if(!p.mine&&header) body.appendChild(el(`<div class="who"><span class="name">${p.name}</span></div>`));
+
+    if(m.file) body.appendChild(el(`<div class="file"><div class="glyph">PDF</div><div><div class="fname">${m.file.name}</div><div class="fsize">${m.file.size}</div></div></div>`));
+    else if(m.once) body.appendChild(onceCard(m));
+    else body.appendChild(el(`<div class="bubble">${m.text}</div>`));
+
+    if(m.tag) body.appendChild(el(`<div class="ttl-tag">${m.tag}</div>`));
+    body.appendChild(el(`<div class="meta" id="meta-${m.id}"></div>`));
+    node.appendChild(body); node.id='m-'+m.id; feed.appendChild(node);
+
+    if(m.verifyOpen)
+      feed.appendChild(el(`<div class="verify">${fingerprint(p.key,44)}<div><h4>Отпечаток · ${p.name}</h4><div class="words">${phrase(p.key)}</div><p>Сверьте эти слова с человеком по другому каналу. Карта в колоде одна, но выдаёт её сервер.</p></div></div>`));
+    prev=m.who;
+  });
+  tick(); feed.scrollTop=feed.scrollHeight;
+}
+
+function renderThreads(){
+  feed.innerHTML='';
+  const peers=[...new Set(state.filter(m=>m.thread!=='room').map(m=>m.thread))];
+  if(!peers.length){
+    feed.appendChild(el('<div class="empty">Здесь пусто. Нажмите на карту участника в общей ленте, чтобы написать лично.</div>'));
+    return;
+  }
+  peers.forEach(id=>{
+    const p=P[id], msgs=state.filter(m=>m.thread===id), last=msgs[msgs.length-1];
+    const left=Math.ceil(last.born+last.life-vClock);
+    const t=left>60?`${Math.ceil(left/60)} мин`:`${left} с`;
+    const row=el(`<button class="thread">${cardTile(p.card,36)}<div><div class="tn">${p.name}</div><div class="tp">${last.who==='me'?'Вы: ':''}${last.text}</div></div><div class="tt">${t}</div></button>`);
+    row.onclick=()=>{view='thread';peer=id;render()};
+    feed.appendChild(row);
+  });
+}
+
+function onceCard(m){
+  if(m.burned==='ash') return el(`<div class="ash">Сожжено · открыла ${P.me.name}</div>`);
+  if(m.burned==='open') return el(`<div class="once revealed"><h4>Открыто один раз</h4><div class="payload">${m.once.payload}</div><p>Исчезнет через несколько секунд. Скопируйте сейчас.</p></div>`);
+  const c=el(`<div class="once"><h4>Одноразовая ссылка</h4><p>Откроется у первого, кто нажмёт. Второго раза не будет.</p><button class="burn">Открыть и уничтожить</button></div>`);
+  c.querySelector('.burn').onclick=()=>{m.burned='open';render();setTimeout(()=>{m.burned='ash';render()},5000)};
+  return c;
+}
+function toggleVerify(id){
+  const m=state.find(x=>x.id===id),was=m.verifyOpen;
+  state.forEach(x=>x.verifyOpen=false); m.verifyOpen=!was; render();
+}
+
+/* ---------- угасание: абсолютное окно, не доля срока ---------- */
+function tick(){
+  let died=false;
+  state.forEach(m=>{
+    const left=m.born+m.life-vClock, node=document.getElementById('m-'+m.id);
+    if(!node)return; if(left<=0){died=true;return}
+    let o=1,b=0;
+    if(left<FADE_WINDOW){const f=left/FADE_WINDOW;o=0.26+0.74*f;b=(1-f)*0.6}
+    node.style.opacity=o.toFixed(3);
+    node.style.filter=b>0.02?`blur(${b.toFixed(2)}px)`:'none';
+    const meta=document.getElementById('meta-'+m.id);
+    if(meta){
+      if(left<FADE_WINDOW){meta.classList.add('show');meta.textContent=`${Math.ceil(left)} с`}
+      else meta.classList.remove('show');
+    }
+  });
+  if(died){for(let i=state.length-1;i>=0;i--)if(state[i].born+state[i].life-vClock<=0)state.splice(i,1);render()}
+}
+
+/* ---------- ввод ---------- */
+document.getElementById('ttlPick').onclick=function(){
+  ttlIdx=(ttlIdx+1)%TTLS.length; this.textContent=TTLS[ttlIdx].l;
+};
+document.getElementById('send').onclick=send;
+document.getElementById('input').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+function send(){
+  const i=document.getElementById('input'),v=i.value.trim(); if(!v)return;
+  const t=TTLS[ttlIdx];
+  state.push({id:++seq,who:'me',text:esc(v),life:Math.min(t.s,900),born:vClock,
+              thread:view==='thread'?peer:'room',
+              tag:t.l!=="48 ч"?`живёт ${t.l}`:null});
+  i.value=''; render();
+}
+/* ---------- вкладки ---------- */
+document.getElementById('tabRoom').onclick=()=>{view='room';render()};
+document.getElementById('tabDm').onclick=()=>{view='dm';render()};
+document.getElementById('back').onclick=()=>{view='dm';peer=null;render()};
+
+/* ---------- своя карта: шторка ---------- */
+document.getElementById('meCard').innerHTML=cardTile(P.me.card,26);
+document.getElementById('sheetCard').innerHTML=cardTile(P.me.card,40);
+document.getElementById('meNameShort').textContent=P.me.name;
+document.getElementById('meName').textContent=P.me.name;
+document.getElementById('meFp').innerHTML=fingerprint(P.me.key,44);
+document.getElementById('meWords').textContent=phrase(P.me.key);
+
+let revealTimer=null;
+function hidePhrase(){
+  clearTimeout(revealTimer);
+  document.getElementById('meWords').classList.add('masked');
+  const b=document.getElementById('meReveal'); b.hidden=false;
+}
+document.getElementById('meReveal').onclick=function(){
+  document.getElementById('meWords').classList.remove('masked');
+  this.hidden=true;
+  revealTimer=setTimeout(hidePhrase,15000);
+};
+function sheet(open){
+  document.getElementById('sheet').hidden=!open;
+  document.getElementById('backdrop').hidden=!open;
+  if(!open)hidePhrase();
+}
+document.getElementById('meChip').onclick=()=>sheet(true);
+document.getElementById('backdrop').onclick=()=>sheet(false);
+document.addEventListener('keydown',e=>{if(e.key==='Escape')sheet(false)});
+
+document.getElementById('speed').onclick=function(){
+  mult=mult===1?60:1; this.textContent='×'+mult; this.setAttribute('aria-pressed',mult!==1);
+};
+
+M.forEach((m,i)=>state.push(Object.assign({id:++seq,born:-i*3,thread:'room'},m)));
+DM.forEach((m,i)=>state.push(Object.assign({id:++seq,born:-i*5},m)));
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,981 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Фрагмент URL Referer и так не переносит, но и путь наружу отдавать незачем. -->
+<meta name="referrer" content="no-referrer">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Вылазка</title>
+<style>
+:root{
+  --bg:#191817; --surface:#211F1E; --surface-hi:#2B2827;
+  --ink:#E8E4DF; --ink-2:#8C8681; --ink-3:#5A5451; --ember:#D9542F;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;
+  line-height:1.45;-webkit-font-smoothing:antialiased;display:flex;justify-content:center}
+.app{width:100%;max-width:560px;height:100dvh;display:flex;flex-direction:column;position:relative;overflow:hidden}
+
+.top{display:flex;align-items:center;gap:8px;padding:14px 16px 10px}
+.room{font-size:17px;font-weight:600;letter-spacing:-.01em;margin-right:auto}
+.me-chip{display:flex;align-items:center;gap:7px;border:0;cursor:pointer;background:var(--surface);
+  padding:6px 11px;border-radius:999px;font-family:var(--mono);font-size:12px;color:var(--ink-2)}
+.me-chip b{color:var(--ink);font-weight:600}
+.me-chip:focus-visible,.reveal:focus-visible,button:focus-visible{outline:2px solid var(--ink-2);outline-offset:2px}
+
+.feed{flex:1;overflow-y:auto;padding:6px 16px 8px;display:flex;flex-direction:column;gap:2px;scrollbar-width:none}
+.feed::-webkit-scrollbar{display:none}
+.msg{padding-top:12px}
+.who{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-bottom:3px}
+.bubble{background:var(--surface);border-radius:16px;padding:9px 13px;font-size:15.5px;
+  word-wrap:break-word;display:inline-block;max-width:83%}
+.bubble.bad{color:var(--ink-3);font-family:var(--mono);font-size:12.5px}
+
+.composer{margin:6px 12px calc(12px + env(safe-area-inset-bottom));background:var(--surface);
+  border-radius:24px;padding:7px 7px 7px 14px;display:flex;align-items:center;gap:8px}
+.composer input{flex:1;background:none;border:0;outline:none;color:var(--ink);font-family:var(--sans);
+  font-size:16px;padding:8px 0;min-width:0}
+.composer input::placeholder{color:var(--ink-3)}
+.icon{width:36px;height:36px;flex:0 0 36px;border:0;border-radius:50%;cursor:pointer;
+  background:var(--ink);color:var(--bg);display:grid;place-items:center;font-size:15px}
+.icon:disabled{background:var(--surface-hi);color:var(--ink-3);cursor:default}
+.ttl-pick{border:0;cursor:pointer;background:var(--surface-hi);color:var(--ink-2);
+  font-family:var(--mono);font-size:11.5px;padding:7px 10px;border-radius:999px;white-space:nowrap}
+/* Угасание в абсолютном времени: последние десять минут независимо от того, был срок
+   час или пять суток. В доле от срока долгоживущее висело бы полупрозрачным двое суток
+   и выглядело поломкой. */
+.msg{transition:opacity .8s linear}
+.msg.fading{opacity:.45}
+.ttl-tag{font-family:var(--mono);font-size:10px;color:var(--ink-3);padding:3px 4px 0}
+.note{text-align:center;font-family:var(--mono);font-size:10.5px;color:var(--ink-3);padding:0 20px 10px;line-height:1.5}
+
+.backdrop{position:absolute;inset:0;z-index:8;background:rgba(15,14,13,.62);
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.sheet{position:absolute;left:12px;right:12px;bottom:12px;z-index:9;background:var(--surface);
+  border-radius:22px;padding:18px 18px 16px;max-height:88dvh;overflow-y:auto}
+.sheet .t1{font-size:17px;font-weight:600;letter-spacing:-.01em}
+.sheet .fp{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);margin-top:6px;word-break:break-all;line-height:1.6}
+.sheet h4{margin:18px 0 8px;font-size:12px;font-weight:600;color:var(--ink-2)}
+.sheet p{margin:8px 0 0;font-size:12.5px;color:var(--ink-3);line-height:1.4}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.act{border:0;cursor:pointer;background:var(--surface-hi);color:var(--ink);font-family:var(--sans);
+  font-size:13.5px;padding:9px 14px;border-radius:11px}
+.act:disabled{color:var(--ink-3);cursor:default}
+.act.danger{background:var(--ember);color:#fff;font-weight:600}
+.words{font-family:var(--mono);font-size:13.5px;line-height:1.75;margin-top:10px;
+  background:var(--bg);border-radius:12px;padding:12px 14px}
+.words.masked{filter:blur(6px);opacity:.5;user-select:none}
+.words ol{margin:0;padding-left:2.2em;columns:2;column-gap:18px}
+.words li{padding-right:6px}
+.countdown{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-top:8px}
+.field{display:block;width:100%;margin-top:10px;background:var(--bg);border:0;border-radius:11px;
+  color:var(--ink);font-family:var(--mono);font-size:13.5px;padding:11px 13px;outline:none;resize:vertical}
+.field::placeholder{color:var(--ink-3)}
+.msgline{margin-top:10px;font-size:12.5px;color:var(--ink-2);line-height:1.4}
+.msgline.bad{color:var(--ember)}
+/* QR всегда чёрным по белому: инверсия под тёмную тему — первая причина, по которой
+   сканер не видит код. Поле вокруг рисует сам генератор. */
+.qr-wrap{margin-top:12px;background:#fff;border-radius:12px;padding:10px;display:flex;justify-content:center}
+.qr-wrap canvas,.qr-wrap video{width:100%;max-width:260px;height:auto;display:block;border-radius:6px}
+.code{font-family:var(--mono);font-size:26px;letter-spacing:.22em;text-align:center;
+  margin-top:12px;color:var(--ink)}
+.hidden{display:none}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <div class="top">
+    <div class="room" id="roomTitle">Вылазка</div>
+    <button class="me-chip" id="meChip" aria-haspopup="dialog"><b id="seats">…</b> · <span id="meFp">…</span></button>
+  </div>
+
+  <div class="feed" id="feed"></div>
+
+  <form class="composer" id="composer">
+    <input id="text" placeholder="Сообщение" autocomplete="off" disabled>
+    <button type="button" class="ttl-pick" id="ttlPick" aria-label="Срок жизни">48 ч</button>
+    <button class="icon" id="send" aria-label="Отправить" disabled>↑</button>
+  </form>
+  <div class="note" id="status">загрузка…</div>
+
+  <div class="backdrop hidden" id="backdrop"></div>
+  <div class="sheet hidden" id="sheet" role="dialog" aria-modal="true" aria-label="Ваш ключ">
+    <div class="t1">Ваш ключ</div>
+    <div class="fp" id="fingerprint"></div>
+    <p id="iosHint" class="hidden">
+      Safari на iOS чистит данные сайта примерно через неделю без визита, и ключ пропадёт.
+      Добавьте страницу на домашний экран — на установленные так сайты это не действует.
+    </p>
+
+    <h4>Экспорт</h4>
+    <p>Сделайте это сейчас. Без экспорта потеря браузера — потеря доступа ко всем комнатам:
+      сервер не хранит ни ключа, ни способа его вывести.</p>
+
+    <div class="row">
+      <button class="act" id="showWords">Показать 24 слова</button>
+      <button class="act" id="saveFile">Скачать key.enc</button>
+      <button class="act" id="showQr">Перенести на устройство</button>
+    </div>
+
+    <div id="qrPanel" class="hidden">
+      <div class="qr-wrap"><canvas id="qrCanvas" aria-label="Код переноса"></canvas></div>
+      <div class="code" id="transferCode"></div>
+      <div class="countdown" id="qrCountdown"></div>
+      <p>На новом устройстве откройте этот же адрес, «Сканировать код», и назовите
+        шесть цифр голосом. В самом коде их нет: снявший экран через плечо без них
+        ничего не откроет.</p>
+      <div class="msgline hidden" id="qrMsg"></div>
+    </div>
+
+    <div id="wordsPanel" class="hidden">
+      <div class="words masked" id="wordsBox"><ol id="wordsList"></ol></div>
+      <div class="countdown" id="countdown"></div>
+      <p>Перепишите на бумагу по порядку. Не фотографируйте: снимок уедет в облако.</p>
+    </div>
+
+    <div id="filePanel" class="hidden">
+      <input class="field" id="passphrase" type="password" placeholder="Парольная фраза" autocomplete="new-password">
+      <div class="row">
+        <button class="act" id="doSaveFile">Зашифровать и скачать</button>
+      </div>
+      <p>Файл без фразы бесполезен, фраза без файла — тоже. Шифрование Argon2id занимает
+        секунду-другую и требует памяти.</p>
+      <div class="msgline hidden" id="fileMsg"></div>
+    </div>
+
+    <h4 id="inviteHead" class="hidden">Пригласить</h4>
+    <p id="inviteWhy" class="hidden">Ссылку передавайте целиком и по каналу, которому доверяете:
+      до погашения она открывает комнату любому, кто её открыл. После — становится бесполезной,
+      даже если её сохранили.</p>
+    <div class="row hidden" id="inviteRow">
+      <button class="act" id="makeInvite">Создать ссылку</button>
+    </div>
+    <textarea class="field hidden" id="inviteLink" rows="3" readonly></textarea>
+
+    <h4>У меня уже есть ключ</h4>
+    <p>Импорт заменит ключ на этом устройстве. Прежняя личность, если она не выгружена,
+      будет потеряна безвозвратно.</p>
+    <textarea class="field" id="importWords" rows="3" placeholder="24 слова через пробел"></textarea>
+    <input class="field" id="importFile" type="file" accept=".enc">
+    <input class="field" id="importPass" type="password" placeholder="Фраза от файла" autocomplete="off">
+    <div class="row">
+      <button class="act danger" id="doImport">Заменить ключ</button>
+      <button class="act" id="startScan">Сканировать код</button>
+      <button class="act" id="closeSheet">Закрыть</button>
+    </div>
+    <div class="msgline hidden" id="importMsg"></div>
+
+    <div id="scanPanel" class="hidden">
+      <div class="qr-wrap"><video id="scanVideo" playsinline muted></video></div>
+      <div class="msgline" id="scanMsg">наведите камеру на код со старого устройства</div>
+      <input class="field hidden" id="scanCode" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="6" placeholder="Шесть цифр со старого экрана">
+      <div class="row">
+        <button class="act danger hidden" id="doScanImport">Заменить ключ</button>
+        <button class="act" id="stopScan">Отменить</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/libsodium-sumo.js"></script>
+<script src="/vendor/libsodium-wrappers-sumo.js"></script>
+<script type="module">
+import { newSeed, keysFromSeed, saveSeed, loadSeed, saveServerKey, loadServerKey } from '/js/identity.js';
+import { seedToWords, wordsToSeed } from '/js/words.js';
+import { encryptSeed, decryptSeed } from '/js/keyfile.js';
+
+await sodium.ready;
+
+const $ = (id) => document.getElementById(id);
+const B64 = sodium.base64_variants.URLSAFE_NO_PADDING;
+
+/* ---------- личность ---------- */
+
+let seed = await loadSeed();
+if (!seed) {
+  seed = newSeed();
+  await saveSeed(seed);
+}
+let keys = keysFromSeed(seed);
+
+function shortFingerprint(base64Key) {
+  try {
+    return sodium.to_hex(sodium.from_base64(base64Key, B64)).slice(0, 8);
+  } catch {
+    return base64Key.slice(0, 8);
+  }
+}
+
+function showIdentity() {
+  const hex = sodium.to_hex(keys.signPublic);
+  $('meFp').textContent = hex.slice(0, 8);
+  $('fingerprint').textContent = hex.match(/.{1,4}/g).join(' ');
+}
+showIdentity();
+
+// Safari на iOS чистит хранилище примерно через неделю простоя, и личность исчезает сама.
+// Установленным на домашний экран сайтам это не грозит, поэтому предупреждаем заранее.
+const isIos = /iP(hone|ad|od)/.test(navigator.userAgent);
+if (isIos && !navigator.standalone) {
+  $('iosHint').classList.remove('hidden');
+}
+
+/* ---------- шторка ---------- */
+
+function openSheet() {
+  $('sheet').classList.remove('hidden');
+  $('backdrop').classList.remove('hidden');
+}
+
+function closeSheet() {
+  hideWords();
+  // Камера и код переноса гаснут вместе со шторкой: оставить их работать за закрытым
+  // экраном — значит показывать код дольше двух минут и держать камеру включённой.
+  stopQr();
+  stopScan();
+  $('sheet').classList.add('hidden');
+  $('backdrop').classList.add('hidden');
+  $('wordsPanel').classList.add('hidden');
+  $('filePanel').classList.add('hidden');
+  $('qrPanel').classList.add('hidden');
+  $('passphrase').value = '';
+  $('importPass').value = '';
+  $('importWords').value = '';
+  // Файл сбрасывается тоже: иначе он останется выбранным, и следующее нажатие
+  // «Заменить ключ» с пустыми словами молча вернёт прежнюю личность.
+  $('importFile').value = '';
+  $('importMsg').classList.add('hidden');
+  $('fileMsg').classList.add('hidden');
+}
+
+$('meChip').addEventListener('click', openSheet);
+$('closeSheet').addEventListener('click', closeSheet);
+$('backdrop').addEventListener('click', closeSheet);
+
+/* ---------- слова ---------- */
+
+let hideTimer = null;
+let tick = null;
+
+function hideWords() {
+  clearTimeout(hideTimer);
+  clearInterval(tick);
+  $('wordsBox').classList.add('masked');
+  $('countdown').textContent = '';
+  $('showWords').textContent = 'Показать 24 слова';
+  // Слова из DOM убираются, а не просто размываются: размытие это картинка,
+  // а не защита, и в дереве страницы они остались бы текстом.
+  $('wordsList').replaceChildren();
+}
+
+function revealWords() {
+  const words = seedToWords(seed);
+  $('wordsList').replaceChildren(...words.map((word) => {
+    const item = document.createElement('li');
+    item.textContent = word;
+    return item;
+  }));
+
+  $('wordsPanel').classList.remove('hidden');
+  $('wordsBox').classList.remove('masked');
+  $('showWords').textContent = 'Спрятать';
+
+  let left = 15;
+  $('countdown').textContent = `спрячется через ${left} с`;
+  tick = setInterval(() => {
+    left -= 1;
+    $('countdown').textContent = `спрячется через ${left} с`;
+  }, 1000);
+  hideTimer = setTimeout(hideWords, 15000);
+}
+
+$('showWords').addEventListener('click', () => {
+  const shown = !$('wordsBox').classList.contains('masked') && $('wordsList').children.length > 0;
+  shown ? hideWords() : revealWords();
+});
+
+/* ---------- key.enc ---------- */
+
+$('saveFile').addEventListener('click', () => {
+  $('filePanel').classList.toggle('hidden');
+  $('passphrase').focus();
+});
+
+$('doSaveFile').addEventListener('click', async () => {
+  const passphrase = $('passphrase').value;
+  const message = $('fileMsg');
+  message.classList.remove('hidden', 'bad');
+
+  if (passphrase.length < 8) {
+    message.classList.add('bad');
+    message.textContent = 'фраза короче восьми знаков не защищает файл';
+    return;
+  }
+
+  $('doSaveFile').disabled = true;
+  message.textContent = 'шифрую…';
+  try {
+    // Уступаем кадр, иначе Argon2id съест поток и «шифрую…» никто не увидит.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const file = await encryptSeed(seed, passphrase);
+
+    const url = URL.createObjectURL(new Blob([file], { type: 'application/octet-stream' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'key.enc';
+    link.click();
+    URL.revokeObjectURL(url);
+
+    message.textContent = 'файл скачан';
+    $('passphrase').value = '';
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = `не зашифровалось: ${e.message}`;
+  } finally {
+    $('doSaveFile').disabled = false;
+  }
+});
+
+/* ---------- перенос на устройство ---------- */
+
+// Генератор и сканер вместе весят под треть мегабайта. Большинство ключ не переносит
+// никогда, поэтому подтягиваются по нажатию, а не в общей загрузке страницы.
+const loaded = new Map();
+function loadScript(src) {
+  if (!loaded.has(src)) {
+    loaded.set(src, new Promise((resolve, reject) => {
+      const tag = document.createElement('script');
+      tag.src = src;
+      tag.onload = resolve;
+      tag.onerror = () => reject(new Error(`не загрузился ${src}`));
+      document.head.append(tag);
+    }));
+  }
+  return loaded.get(src);
+}
+
+let qrTimer = null;
+let qrTick = null;
+
+function stopQr() {
+  clearTimeout(qrTimer);
+  clearInterval(qrTick);
+  const canvas = $('qrCanvas');
+  canvas.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
+  canvas.width = canvas.height = 0;
+  $('transferCode').textContent = '';
+  $('qrCountdown').textContent = '';
+  $('showQr').textContent = 'Перенести на устройство';
+}
+
+$('showQr').addEventListener('click', async () => {
+  if ($('transferCode').textContent) {
+    stopQr();
+    $('qrPanel').classList.add('hidden');
+    return;
+  }
+
+  const message = $('qrMsg');
+  message.classList.remove('hidden', 'bad');
+  message.textContent = 'готовлю код…';
+  $('qrPanel').classList.remove('hidden');
+
+  try {
+    await loadScript('/vendor/qrcode-generator.js');
+    const { packTransfer, newTransferCode, TRANSFER_TTL_MS } = await import('/js/transfer.js');
+    const { drawQr } = await import('/js/qr.js');
+
+    const code = newTransferCode();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const payload = await packTransfer(seed, code, Date.now());
+
+    drawQr($('qrCanvas'), payload);
+    $('transferCode').textContent = code.replace(/(\d{3})(\d{3})/, '$1 $2');
+    $('showQr').textContent = 'Убрать код';
+    message.classList.add('hidden');
+
+    // Две минуты — половина защиты шестизначного кода, поэтому срок гасит картинку
+    // сам, без участия человека.
+    let left = Math.round(TRANSFER_TTL_MS / 1000);
+    $('qrCountdown').textContent = `код погаснет через ${left} с`;
+    qrTick = setInterval(() => {
+      left -= 1;
+      $('qrCountdown').textContent = `код погаснет через ${left} с`;
+    }, 1000);
+    qrTimer = setTimeout(() => {
+      stopQr();
+      message.classList.remove('hidden');
+      message.textContent = 'код погас, нажмите ещё раз для нового';
+    }, TRANSFER_TTL_MS);
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = e.message;
+  }
+});
+
+/* ---------- сканирование ---------- */
+
+let camera = null;
+let scanning = false;
+let scannedPayload = null;
+
+function stopScan() {
+  scanning = false;
+  // Треки гасятся явно: иначе камера остаётся включённой с горящим индикатором,
+  // даже когда шторка закрыта.
+  camera?.getTracks().forEach((track) => track.stop());
+  camera = null;
+  $('scanVideo').srcObject = null;
+  $('scanPanel').classList.add('hidden');
+  $('scanCode').value = '';
+  $('scanCode').classList.add('hidden');
+  $('doScanImport').classList.add('hidden');
+  scannedPayload = null;
+}
+
+$('stopScan').addEventListener('click', stopScan);
+
+$('startScan').addEventListener('click', async () => {
+  $('scanPanel').classList.remove('hidden');
+  const message = $('scanMsg');
+  message.classList.remove('bad');
+  message.textContent = 'запрашиваю камеру…';
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    message.classList.add('bad');
+    message.textContent = 'камера недоступна: нужен https или localhost';
+    return;
+  }
+
+  try {
+    await loadScript('/vendor/jsQR.js');
+    const { readQr } = await import('/js/qr.js');
+
+    camera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const video = $('scanVideo');
+    video.srcObject = camera;
+    await video.play();
+    message.textContent = 'наведите камеру на код со старого устройства';
+
+    const frame = document.createElement('canvas');
+    const context = frame.getContext('2d', { willReadFrequently: true });
+    scanning = true;
+
+    const tick = () => {
+      if (!scanning) return;
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        frame.width = video.videoWidth;
+        frame.height = video.videoHeight;
+        context.drawImage(video, 0, 0, frame.width, frame.height);
+
+        const found = readQr(context.getImageData(0, 0, frame.width, frame.height));
+        if (found) {
+          scanning = false;
+          scannedPayload = found;
+          camera?.getTracks().forEach((track) => track.stop());
+          camera = null;
+          video.srcObject = null;
+          // Снять «плохой» класс обязательно: иначе успех рисуется акцентным цветом,
+          // оставшимся от прошлой ошибки, а он зарезервирован под необратимое.
+          message.classList.remove('bad');
+          message.textContent = 'код найден. назовите шесть цифр со старого экрана';
+          $('scanCode').classList.remove('hidden');
+          $('doScanImport').classList.remove('hidden');
+          $('scanCode').focus();
+          return;
+        }
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = `камера не открылась: ${e.message}`;
+  }
+});
+
+$('doScanImport').addEventListener('click', async () => {
+  const message = $('scanMsg');
+  message.classList.remove('bad');
+  message.textContent = 'проверяю код…';
+
+  try {
+    const { unpackTransfer } = await import('/js/transfer.js');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const restored = await unpackTransfer(scannedPayload, $('scanCode').value.trim(), Date.now());
+
+    await saveSeed(restored);
+    seed = restored;
+    keys = keysFromSeed(seed);
+    showIdentity();
+
+    stopScan();
+    closeSheet();
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = e.message;
+  }
+});
+
+/* ---------- импорт ---------- */
+
+$('doImport').addEventListener('click', async () => {
+  const message = $('importMsg');
+  message.classList.remove('hidden', 'bad');
+  message.textContent = 'проверяю…';
+
+  try {
+    const typed = $('importWords').value.trim();
+    const picked = $('importFile').files[0];
+    let restored;
+
+    if (typed) {
+      restored = wordsToSeed(typed.split(/\s+/));
+    } else if (picked) {
+      restored = await decryptSeed(new Uint8Array(await picked.arrayBuffer()), $('importPass').value);
+    } else {
+      throw new Error('нечего импортировать: введите слова или выберите файл');
+    }
+
+    await saveSeed(restored);
+    seed = restored;
+    keys = keysFromSeed(seed);
+    showIdentity();
+
+    message.textContent = 'ключ заменён';
+    closeSheet();
+  } catch (e) {
+    message.classList.add('bad');
+    message.textContent = e.message;
+  }
+});
+
+/* ---------- комната ---------- */
+
+const NONCE = sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+
+const RANKS = ['2','3','4','5','6','7','8','9','10','В','Д','К','Т'];
+// Масти монохромные и различаются формой. Красный не вводить: акцентный цвет
+// зарезервирован под необратимые действия.
+// \uFE0E — селектор текстового начертания: без него ♦ и ♥ на части платформ
+// подставляются эмодзи, то есть красными, а красный тут запрещён.
+const SUITS = ['\u2660\uFE0E', '\u2663\uFE0E', '\u2666\uFE0E', '\u2665\uFE0E'];
+
+function cardName(card) {
+  return RANKS[card % 13] + ' ' + SUITS[Math.floor(card / 13)];
+}
+
+// Комната и ключ от неё живут во фрагменте: «<номер>.<ключ>». Фрагмент на сервер
+// не уходит, поэтому ссылка целиком — это и есть приглашение. В фазе 6 её заменит
+// одноразовый токен с эфемерным ключом.
+let roomId = null;
+let roomKey = null;
+let epoch = 1;
+let lastSeenId = 0;
+let entered = false;
+let inviteToken = null;
+// Отказ в создании комнаты запоминается: иначе вкладка, которую развернули на пороге,
+// при каждом переподключении пробует снова и заводит комнату молча — ровно в тот момент,
+// когда устройство наконец впустили.
+let createRefused = false;
+let socket;
+
+let pendingInvite = null;
+
+function readLink() {
+  const raw = location.hash.slice(1);
+  if (!raw) return;
+
+  // /join#<токен>.<эфемерный приватный ключ> — приглашение. Фрагмент на сервер не уходит,
+  // поэтому токена нет ни в логах, ни в Referer.
+  if (location.pathname.startsWith('/join')) {
+    const dot = raw.indexOf('.');
+    // Owner-инвайт первого запуска идёт без эфемерного ключа: комнаты ещё нет,
+    // оборачивать нечего.
+    inviteToken = dot < 0 ? raw : raw.slice(0, dot);
+    pendingInvite = dot < 0 ? null : sodium.from_base64(raw.slice(dot + 1), B64);
+    return;
+  }
+  // Ключ в ссылке необязателен: «#<номер>» — это возврат в свою комнату, ключ к которой
+  // сервер отдаст обёрткой под наш X25519. С ключом — приглашение для нового участника.
+  const dot = raw.indexOf('.');
+  roomId = decodeURIComponent(dot < 0 ? raw : raw.slice(0, dot));
+  if (dot >= 0) {
+    roomKey = sodium.from_base64(raw.slice(dot + 1), B64);
+  }
+}
+
+function writeLink() {
+  // Только номер комнаты. Ключ в адресной строке больше не нужен — своя обёртка лежит
+  // на сервере, — а лишний секрет в истории браузера и на чужом экране ни к чему.
+  // Форма «#<номер>.<ключ>» ещё читается, но не пишется: делиться комнатой теперь
+  // положено приглашением.
+  const wanted = '#' + encodeURIComponent(roomId);
+  if (location.hash !== wanted) {
+    history.replaceState(null, '', location.pathname + location.search + wanted);
+  }
+}
+
+function seal(plaintext) {
+  const nonce = sodium.randombytes_buf(NONCE);
+  const box = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
+    sodium.from_string(plaintext), null, null, nonce, roomKey);
+  const packed = new Uint8Array(nonce.length + box.length);
+  packed.set(nonce);
+  packed.set(box, nonce.length);
+  return sodium.to_base64(packed, sodium.base64_variants.ORIGINAL);
+}
+
+function open(payload) {
+  const packed = sodium.from_base64(payload, sodium.base64_variants.ORIGINAL);
+  return sodium.to_string(sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+    null, packed.slice(NONCE), null, packed.slice(0, NONCE), roomKey));
+}
+
+const cards = new Map();
+
+// Сроки как в README: пять минут, час, сутки, двое суток, пять суток. По умолчанию 48 ч.
+const TTL_CHOICES = [
+  { seconds: 300, label: '5 мин' },
+  { seconds: 3600, label: '1 ч' },
+  { seconds: 86400, label: '24 ч' },
+  { seconds: 172800, label: '48 ч' },
+  { seconds: 432000, label: '5 сут' },
+];
+let ttlChoice = 3;
+
+$('ttlPick').addEventListener('click', () => {
+  ttlChoice = (ttlChoice + 1) % TTL_CHOICES.length;
+  $('ttlPick').textContent = TTL_CHOICES[ttlChoice].label;
+});
+
+// Шифротекст держим при строке: когда ключ комнаты приедет обёрткой, лента
+// перерисовывается на месте, а не перезапрашивается. Перезапрос задваивал реплики.
+const shown = new Map();
+
+function fill(bubble, ciphertext) {
+  bubble.classList.remove('bad');
+  if (!roomKey) {
+    bubble.classList.add('bad');
+    bubble.textContent = 'ключа комнаты нет — расшифровать нечем';
+    return;
+  }
+  try {
+    bubble.textContent = open(ciphertext);
+  } catch {
+    bubble.classList.add('bad');
+    bubble.textContent = 'не расшифровывается: ключ от другой эпохи или другой комнаты';
+  }
+}
+
+function render(frame) {
+  // Один и тот же id второй раз приходит при наложении догрузки на рассылку.
+  if (shown.has(frame.id)) return;
+  lastSeenId = Math.max(lastSeenId, frame.id);
+
+  const row = document.createElement('div');
+  row.className = 'msg';
+  const who = document.createElement('div');
+  who.className = 'who';
+  // Карта, а не отпечаток: она и есть имя участника в комнате. Отпечаток остаётся
+  // якорем доверия и живёт в шторке, карта только подсказка памяти.
+  const card = cards.get(frame.sender);
+  who.textContent = card === undefined ? shortFingerprint(frame.sender) : cardName(card);
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  fill(bubble, frame.ciphertext);
+
+  row.append(who, bubble);
+  shown.set(frame.id, { row, bubble, ciphertext: frame.ciphertext, sender: frame.sender, who,
+    expiresAt: frame.expiresAt });
+  $('feed').append(row);
+  $('feed').scrollTop = $('feed').scrollHeight;
+}
+
+/** Последние десять минут жизни — независимо от того, был срок час или пять суток. */
+const FADE_BEFORE_MS = 600000;
+
+function tickExpiry() {
+  const now = Date.now();
+  for (const [id, entry] of shown) {
+    const left = entry.expiresAt - now;
+    if (left <= 0) {
+      // Сервер это сообщение уже не отдаёт; открытая вкладка не должна показывать его
+      // дольше, чем оно живёт.
+      entry.row.remove();
+      shown.delete(id);
+      continue;
+    }
+    entry.row.classList.toggle('fading', left < FADE_BEFORE_MS);
+  }
+}
+setInterval(tickExpiry, 1000);
+
+function redraw() {
+  for (const entry of shown.values()) {
+    fill(entry.bubble, entry.ciphertext);
+    const card = cards.get(entry.sender);
+    if (card !== undefined) {
+      entry.who.textContent = cardName(card);
+    }
+  }
+}
+
+function ask(frame) {
+  socket.send(JSON.stringify(frame));
+}
+
+const B64ORIG = sodium.base64_variants.ORIGINAL;
+
+async function sha256Url(text) {
+  const digest = await crypto.subtle.digest('SHA-256', sodium.from_string(text));
+  return sodium.to_base64(new Uint8Array(digest), B64);
+}
+
+/**
+ * Выпуск приглашения.
+ *
+ * Токен делается здесь и на сервер целиком не уходит: туда едет только SHA-256.
+ * В ссылке — не ключ комнаты, а эфемерный приватный ключ инвайта; сам ключ комнаты
+ * лежит на сервере обёрнутым под эфемерный публичный и исчезает вместе с погашением.
+ * Иначе пересланная ссылка навсегда остаётся ключом от комнаты.
+ */
+$('makeInvite').addEventListener('click', async () => {
+  if (!roomKey) return;
+
+  const token = sodium.to_base64(sodium.randombytes_buf(32), B64);
+  const ephemeral = sodium.crypto_box_keypair();
+
+  ask({
+    op: 'invite', room: roomId, tokenHash: await sha256Url(token),
+    role: 'member', ttl: 86400, uses: 1,
+    wrapped: sodium.to_base64(sodium.crypto_box_seal(roomKey, ephemeral.publicKey), B64ORIG),
+  });
+
+  const link = `${location.origin}/join#${token}.${sodium.to_base64(ephemeral.privateKey, B64)}`;
+  $('inviteLink').classList.remove('hidden');
+  $('inviteLink').value = link;
+  $('inviteLink').select();
+});
+
+/** Погашение: развернуть эфемерным ключом и тут же перешифровать под свой X25519. */
+function onRedeemed(frame) {
+  const secret = pendingInvite;
+  pendingInvite = null;
+
+  if (!frame.room) {
+    // Owner-инвайт: комнаты нет, выдано право их заводить. Заводим первую сразу —
+    // отдельного экрана «вы владелец, теперь создайте комнату» не нужно.
+    history.replaceState(null, '', '/');
+    roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
+    ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
+    return;
+  }
+
+  const wrapped = sodium.from_base64(frame.wrapped, B64ORIG);
+  roomKey = sodium.crypto_box_seal_open(wrapped, sodium.crypto_scalarmult_base(secret), secret);
+  roomId = frame.room;
+
+  // Своя обёртка под собственный ключ: с этого места инвайт больше не нужен.
+  ask({
+    op: 'wrap', room: roomId, epoch, device: sodium.to_base64(keys.signPublic, B64),
+    wrapped: sodium.to_base64(sodium.crypto_box_seal(roomKey, keys.boxPublic), B64ORIG),
+  });
+
+  history.replaceState(null, '', `/#${encodeURIComponent(roomId)}`);
+  entered = false;
+  ask({ op: 'enter', room: roomId, since: 0 });
+}
+
+/**
+ * Раздаёт ключ комнаты тем, у кого обёртки этой эпохи ещё нет.
+ *
+ * Обёртка — sealed box под X25519 участника: развернуть её может только он, а сервер
+ * видит непрозрачный блоб. Раздать может любой, у кого ключ уже есть.
+ */
+function wrapForPending(pending) {
+  if (!roomKey) return;
+  for (const seat of pending) {
+    if (!seat.box) continue;   // устройство ещё не прислало свой X25519
+    ask({
+      op: 'wrap', room: roomId, epoch, device: seat.device,
+      wrapped: sodium.to_base64(
+        sodium.crypto_box_seal(roomKey, sodium.from_base64(seat.box, B64)),
+        sodium.base64_variants.ORIGINAL),
+    });
+  }
+}
+
+function onRoom(frame) {
+  roomId = frame.room;
+  epoch = frame.epoch;
+  cards.clear();
+  for (const seat of frame.members) {
+    cards.set(seat.device, seat.card);
+  }
+
+  $('roomTitle').textContent = 'Вылазка';
+  // Показываем выпуск только владельцу и администраторам: показать всем — обещать
+  // действие, которое сервер отклонит.
+  const mayInvite = frame.role === 'owner' || frame.role === 'admin';
+  for (const id of ['inviteHead', 'inviteWhy', 'inviteRow']) {
+    $(id).classList.toggle('hidden', !mayInvite);
+  }
+  $('seats').textContent = `${cardName(frame.card)} · ${frame.seatsTaken}/52`;
+  if (frame.deckSpent) {
+    $('status').textContent = 'колода кончилась — комната больше никого не принимает';
+  }
+
+  // Вход в ленту — отдельным кадром и ровно один раз за соединение: до него сервер
+  // не знает, что этой сессии надо слать рассылку, и своё же сообщение не вернётся.
+  // Флаг обязателен: ответ на enter — такой же кадр room, и без него вышел бы цикл.
+  if (!entered) {
+    entered = true;
+    ask({ op: 'enter', room: roomId, since: lastSeenId });
+  }
+
+  redraw();
+
+  if (roomKey) {
+    writeLink();
+    wrapForPending(frame.needWrap);
+  } else {
+    // Ключа нет: просим свою обёртку. Так входит устройство, открывшее адрес без
+    // фрагмента, — например восстановленное из слов.
+    ask({ op: 'key', room: roomId, epoch });
+  }
+}
+
+function onKey(frame) {
+  if (!frame.wrapped) {
+    $('status').textContent = 'ключ комнаты ещё не выдан — попросите участника открыть вкладку';
+    return;
+  }
+  roomKey = sodium.crypto_box_seal_open(
+    sodium.from_base64(frame.wrapped, sodium.base64_variants.ORIGINAL),
+    keys.boxPublic, keys.boxSecret);
+  writeLink();
+  // Лента успела нарисоваться нерасшифрованной, пока ключа не было.
+  redraw();
+}
+
+/**
+ * Вход: сервер даёт одноразовый вызов, браузер подписывает его ключом устройства.
+ * Приватный ключ никуда не уходит, пароля нет.
+ *
+ * Вызов и подпись едут параметрами запроса, а не во фрагменте: секрета в них нет,
+ * оба одноразовые. Фрагмент занят комнатой и ключом от неё.
+ */
+async function signedSocketUrl() {
+  const response = await fetch('/api/challenge');
+  if (!response.ok) {
+    throw new Error(response.status === 429 ? 'слишком много попыток входа' : 'сервер не выдал вызов');
+  }
+  const challenge = await response.json();
+  const nonce = sodium.from_base64(challenge.nonce, B64);
+
+  // Подпись сервера проверяется до того, как мы подпишем что-либо своим ключом:
+  // она отличает наш сервер от подставленного посередине.
+  const serverKey = sodium.from_base64(challenge.serverPublicKey, B64);
+  if (!sodium.crypto_sign_verify_detached(sodium.from_base64(challenge.serverSignature, B64), nonce, serverKey)) {
+    throw new Error('сервер не подтвердил вызов своей подписью');
+  }
+  await rememberServerKey(challenge.serverPublicKey);
+
+  const signature = sodium.crypto_sign_detached(nonce, keys.signSecret);
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${location.host}/ws`
+    + `?nonce=${encodeURIComponent(challenge.nonce)}`
+    + `&device=${encodeURIComponent(sodium.to_base64(keys.signPublic, B64))}`
+    + `&signature=${encodeURIComponent(sodium.to_base64(signature, B64))}`;
+}
+
+/**
+ * Отпечаток сервера запоминается при первом входе. Смена ключа — это либо переустановка
+ * сервера, либо подмена, и молчать об этом нельзя.
+ */
+async function rememberServerKey(current) {
+  const known = await loadServerKey();
+  if (!known) {
+    await saveServerKey(current);
+  } else if (known !== current) {
+    // Не блокируем вход: у самохостера это чаще переустановка, чем подмена. Но и молчать
+    // нельзя — отличить одно от другого может только человек.
+    $('status').textContent = 'ключ сервера сменился с прошлого входа — проверьте, что это ваш сервер';
+  }
+}
+
+async function connect() {
+  let url;
+  try {
+    url = await signedSocketUrl();
+  } catch (e) {
+    $('status').textContent = `${e.message}, повтор через 5 с`;
+    setTimeout(connect, 5000);
+    return;
+  }
+
+  socket = new WebSocket(url);
+
+  socket.onopen = () => {
+    $('status').textContent = 'в комнату — только по приглашению; сервер пока принимает любое устройство';
+    $('text').disabled = false;
+    $('send').disabled = false;
+
+    // Свой X25519 — первым делом: без него участнику нечем обернуть ключ комнаты.
+    ask({ op: 'hello', box: sodium.to_base64(keys.boxPublic, B64) });
+
+    entered = false;
+    if (inviteToken) {
+      ask({ op: 'redeem', token: inviteToken });
+      inviteToken = null;
+    } else if (!roomId && !createRefused) {
+      roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
+      ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
+    } else {
+      ask({ op: 'enter', room: roomId, since: lastSeenId });
+      entered = true;
+    }
+  };
+
+  socket.onmessage = (event) => {
+    const frame = JSON.parse(event.data);
+    if (frame.op === 'room') onRoom(frame);
+    else if (frame.op === 'msg') render(frame);
+    else if (frame.op === 'key') onKey(frame);
+    else if (frame.op === 'redeemed') onRedeemed(frame);
+    else if (frame.op === 'error') {
+      if (frame.reason === 'нужно приглашение') createRefused = true;
+      $('status').textContent = frame.reason;
+    }
+  };
+
+  socket.onclose = () => {
+    $('status').textContent = 'связь потеряна, переподключаюсь…';
+    $('text').disabled = true;
+    $('send').disabled = true;
+    setTimeout(connect, 1000);
+  };
+}
+
+$('composer').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (!$('text').value || !roomKey) return;
+  ask({ op: 'send', room: roomId, ciphertext: seal($('text').value),
+        ttl: TTL_CHOICES[ttlChoice].seconds });
+  $('text').value = '';
+});
+
+readLink();
+connect();
+</script>
+</body>
+</html>
