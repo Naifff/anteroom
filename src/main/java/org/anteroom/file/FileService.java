@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.anteroom.Refusal;
 import org.anteroom.room.Room;
 import org.anteroom.room.RoomService;
 import org.springframework.beans.factory.annotation.Value;
@@ -103,10 +104,10 @@ public class FileService {
         forgetExpired(now);
 
         if (reserved(room.id(), now) + declaredSize > roomQuota) {
-            throw new IllegalArgumentException("в комнате кончилось место под файлы");
+            throw new Refusal(Refusal.ROOM_FULL);
         }
         if (reserved(null, now) + declaredSize > diskQuota) {
-            throw new IllegalArgumentException("на сервере кончилось место под файлы");
+            throw new Refusal(Refusal.DISK_FULL);
         }
 
         // Срок тот же, что у сообщений, и зажимается так же: он приходит от клиента.

@@ -88,7 +88,7 @@ class RoomLimitsTest {
             JsonNode refused = owner.request("{\"op\":\"create\",\"defaultTtl\":3600,\"maxTtl\":86400}");
 
             assertThat(refused.get("op").asText()).isEqualTo("error");
-            assertThat(refused.get("reason").asText()).contains("пропуск");
+            assertThat(refused.get("code").asText()).isEqualTo("work-rejected");
         }
     }
 
@@ -122,7 +122,10 @@ class RoomLimitsTest {
             JsonNode second = owner.createRoom();
 
             assertThat(second.get("op").asText()).isEqualTo("error");
-            assertThat(second.get("reason").asText()).contains("слишком часто");
+            // Код, а не фраза: формулировку переводит браузер, и тест, завязанный на текст,
+            // ломался бы от правки словаря — а сломанным он выглядит как найденный баг.
+            assertThat(second.get("code").asText()).isEqualTo("too-often");
+            assertThat(second.has("reason")).as("текста отказа в кадре быть не должно").isFalse();
         }
     }
 

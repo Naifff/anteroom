@@ -721,7 +721,7 @@ class RoomProtocolTest {
 
             // Ответы обязаны совпасть дословно: по разнице видно, какой инвайт существовал.
             assertThat(spent.get("op").asText()).isEqualTo("error");
-            assertThat(spent.get("reason").asText()).isEqualTo(never.get("reason").asText());
+            assertThat(spent.get("code").asText()).isEqualTo(never.get("code").asText());
         }
     }
 

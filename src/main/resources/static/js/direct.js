@@ -36,7 +36,7 @@ export function packEnvelopes(messageKey, recipients) {
     const out = sodium.randombytes_buf(ENVELOPES);
     for (const [card, publicKey] of recipients) {
         if (card < 0 || card >= DECK) {
-            throw new Error(`карта вне колоды: ${card}`);
+            throw new Error('x.bad-card');
         }
         out.set(sodium.crypto_box_seal(messageKey, publicKey), card * SLOT);
     }

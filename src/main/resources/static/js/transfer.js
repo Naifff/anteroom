@@ -60,20 +60,20 @@ export async function unpackTransfer(payload, code, now) {
     const bytes = new Uint8Array(payload);
     const headerLength = MAGIC.length + 1 + DEADLINE_BYTES + 8;
     if (bytes.length < headerLength + SALT_BYTES + sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES) {
-        throw new Error('это не код переноса');
+        throw new Error('x.transfer-alien');
     }
     if (sodium.to_string(bytes.slice(0, MAGIC.length)) !== MAGIC) {
-        throw new Error('это не код переноса');
+        throw new Error('x.transfer-alien');
     }
     if (bytes[MAGIC.length] !== VERSION) {
-        throw new Error(`код переноса версии ${bytes[MAGIC.length]}, эта сборка знает только ${VERSION}`);
+        throw new Error('x.transfer-version');
     }
 
     const header = bytes.slice(0, headerLength);
     const view = new DataView(bytes.buffer, bytes.byteOffset);
     const deadline = Number(view.getBigUint64(MAGIC.length + 1));
     if (now > deadline) {
-        throw new Error('код переноса просрочен: покажите новый на старом устройстве');
+        throw new Error('x.transfer-expired');
     }
 
     const opslimit = view.getUint32(MAGIC.length + 9);
@@ -88,7 +88,7 @@ export async function unpackTransfer(payload, code, now) {
     try {
         return sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(null, box, header, nonce, key);
     } catch {
-        throw new Error('не открывается: другой код или испорченный QR');
+        throw new Error('x.transfer-locked');
     }
 }
 

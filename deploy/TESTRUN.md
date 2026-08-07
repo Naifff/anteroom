@@ -1,41 +1,42 @@
-# Тестовый прогон на хостинге
+# Trial run on a host
 
-Разовый запуск, чтобы посмотреть на живую систему. **Без автозагрузки**: сервис не заводится,
-после перезагрузки машины ничего само не поднимется.
+A one-off launch to look at the running system. **No autostart**: no service is installed, and
+nothing comes up by itself after the machine reboots.
 
-Для постоянной работы это не годится — там systemd и TLS, см. `README.md`.
-
----
-
-## Что понадобится
-
-- Java 21 или новее на хосте. Проверить: `java -version`
-- Доступ по SSH
-- Порт 8080 свободен (или любой другой, ниже он задаётся флагом)
-
-Открывать порт наружу **не нужно и не надо** — весь доступ пойдёт через SSH-туннель,
-см. раздел «Почему через туннель».
+This is not suitable for permanent operation — that needs systemd and TLS, see `README.md`.
 
 ---
 
-## 1. Залить
+## What you need
 
-С локальной машины:
+- Java 21 or newer on the host. Check with `java -version`
+- SSH access
+- Port 8080 free (or any other, set by a flag below)
+
+Opening the port to the outside is **neither needed nor wanted** — all access goes through an
+SSH tunnel, see "Why through a tunnel".
+
+---
+
+## 1. Upload
+
+From your local machine:
 
 ```bash
 scp messenger.jar SHA256SUMS you@host:~/
 ```
 
-На хосте — сверить, что доехало то же самое:
+On the host, check that what arrived is what you sent:
 
 ```bash
 sha256sum -c SHA256SUMS
 ```
 
-Должно ответить `messenger.jar: OK`. Если нет — файл побился при передаче, лить заново.
-Именно этот jar раздаёт браузеру код, который шифрует переписку, так что проверка не формальность.
+It should answer `messenger.jar: OK`. If it does not, the file was corrupted in transit;
+upload it again. This jar is what hands the browser the code that encrypts the conversation,
+so the check is not a formality.
 
-## 2. Запустить
+## 2. Start
 
 ```bash
 mkdir -p ~/anteroom-test
@@ -50,19 +51,19 @@ nohup java -jar ~/messenger.jar \
 echo $! > $HOME/anteroom-test/anteroom.pid
 ```
 
-`nohup … &` держит процесс после отключения SSH. PID кладём в файл, чтобы потом было что
-останавливать.
+`nohup … &` keeps the process alive after SSH disconnects. The PID goes into a file so there
+is something to stop later.
 
-Первый старт занимает секунд двадцать: создаётся база, генерируется ключевая пара сервера,
-прогоняются миграции.
+The first start takes about twenty seconds: the database is created, the server key pair is
+generated, migrations run.
 
-## 3. Проверить, что поднялось
+## 3. Check that it came up
 
 ```bash
 tail -40 ~/anteroom-test/anteroom.log
 ```
 
-Три строки, которые должны быть:
+Three lines that should be there:
 
 ```
 Отпечаток бандла (файлов: 17): sha256:9a2274282ab94fec2dbba1d8d6d6c1696e16bc87e147fa91167d0fc7e8e51779
@@ -71,134 +72,138 @@ Undertow started on port 8080 (http)
 http://localhost:8080/join#...
 ```
 
-**Отпечаток бандла** сверить с тем, что в релизных заметках: он говорит, что сервер
-раздаёт браузерам именно тот код. Для этой сборки — `9a227428…e51779`.
+**The bundle fingerprint** should match the one in the release notes: it says the server is
+serving browsers exactly that code.
 
-**Ссылку владельца скопировать целиком, вместе с частью после `#`.** Печатается она один раз;
-в базе лежит только хэш, восстановить её нельзя. Потеряли до перехода — останавливайте сервер,
-удаляйте `data/` и начинайте заново (раздел «Начать с чистого листа»).
+**Copy the owner link in full, including the part after `#`.** It is printed once; the database
+holds only its hash, and it cannot be recovered. Lose it before opening it and you stop the
+server, delete `data/` and start over (see "Starting from scratch").
 
-## 4. Открыть в браузере
+## 4. Open it in a browser
 
-С локальной машины поднять туннель:
+Bring up a tunnel from your local machine:
 
 ```bash
 ssh -N -L 8080:localhost:8080 you@host
 ```
 
-Команда не возвращает управление, пока туннель жив. Оставить её в отдельном окне.
+The command does not return while the tunnel is alive. Leave it in its own window.
 
-Теперь открыть напечатанную ссылку **как есть**, `http://localhost:8080/join#...` —
-она уже указывает на localhost, потому что мы так задали `--app.public-url`.
+Now open the printed link **as it is**, `http://localhost:8080/join#...` — it already points at
+localhost, because that is what `--app.public-url` was set to.
 
-Второе устройство для проверки приглашений и личных сообщений: поднять такой же туннель
-с другой машины либо открыть `http://127.0.0.1:8080` в том же браузере — это другой origin,
-то есть другое хранилище ключа и другая личность.
-
----
-
-## Почему через туннель, а не по адресу сервера
-
-Не из осторожности, а потому что иначе половина системы не работает.
-
-**Браузер выдаёт `crypto.subtle` только в защищённом контексте** — это HTTPS либо `localhost`.
-На `http://адрес-сервера:8080` его просто нет, и ломается всё, что считает SHA-256 в браузере:
-выпуск приглашений и создание одноразовых записок. Камера для переноса ключа по QR тоже
-требует защищённого контекста.
-
-Через туннель origin становится `localhost`, и всё это работает без единой строчки настройки TLS.
-
-Вторая причина по существу: по открытому HTTP бандл едет в открытую, и любой на пути может
-его подменить. Сквозное шифрование от этого не спасает — подменённый JS отдаст ключи сам.
-Ради разового теста поднимать Let's Encrypt незачем, а туннель закрывает вопрос целиком.
-
-Для постоянной работы — прокси с TLS впереди (`deploy/Caddyfile`) и **обязательно**
-`--server.forward-headers-strategy=framework` у приложения. Без неё приложение за прокси
-видит схему `http`, браузер шлёт `Origin: https://…`, и Spring отклоняет апгрейд WebSocket
-с кодом 403: страница открывается, а лента не оживает.
+For a second device, to test invitations and direct messages: bring up the same tunnel from
+another machine, or open `http://127.0.0.1:8080` in the same browser — that is a different
+origin, so a different key store and a different device identity.
 
 ---
 
-## Остановить
+## Why through a tunnel rather than the server's address
+
+Not out of caution. Without it, half the system does not work.
+
+**A browser exposes `crypto.subtle` only in a secure context** — HTTPS or `localhost`. On
+`http://server-address:8080` it is simply absent, and everything that computes SHA-256 in the
+browser breaks: issuing invitations and creating one-time notes. The camera used for key
+transfer by QR also requires a secure context.
+
+Through a tunnel the origin becomes `localhost`, and all of that works without configuring TLS
+at all.
+
+The second reason is substantive: over plain HTTP the bundle travels in the clear, and anyone
+on the path can substitute it. End-to-end encryption does not save you — substituted JavaScript
+hands over the keys itself. Setting up Let's Encrypt for a one-off test is not worth it, and a
+tunnel closes the question entirely.
+
+For permanent operation, put a TLS proxy in front (`deploy/Caddyfile`) and **make sure** the
+application gets `--server.forward-headers-strategy=framework`. Without it the application
+behind a proxy sees the scheme as `http`, the browser sends `Origin: https://…`, and Spring
+rejects the WebSocket upgrade with 403: the page opens, and the feed never comes alive.
+
+---
+
+## Stopping
 
 ```bash
 kill $(cat ~/anteroom-test/anteroom.pid)
 ```
 
-Сервер завершается корректно: доигрывает начатые запросы и закрывает базу. Занимает
-несколько секунд.
+The server shuts down cleanly: it finishes requests in flight and closes the database. This
+takes a few seconds.
 
-Проверить, что остановился:
+Check that it stopped:
 
 ```bash
-pgrep -af messenger.jar || echo "не запущен"
+pgrep -af messenger.jar || echo "not running"
 ```
 
-Если по какой-то причине висит:
+If it hangs for some reason:
 
 ```bash
 kill -9 $(cat ~/anteroom-test/anteroom.pid)
 ```
 
-`-9` не даёт закрыть базу штатно. SQLite в режиме WAL это переживёт — журнал доиграется при
-следующем открытии, — но без нужды так не делать.
+`-9` gives no chance to close the database properly. SQLite in WAL mode survives this — the
+journal replays on the next open — but do not do it without reason.
 
-Туннель останавливается `Ctrl+C` в его окне.
+The tunnel stops with `Ctrl+C` in its window.
 
 ---
 
-## Запустить снова
+## Starting again
 
-Данные никуда не делись, ссылка владельца печататься не будет — владелец уже назначен.
-Просто повторить команду из шага 2. Комнаты, участники и непротухшие сообщения на месте.
+The data is still there and the owner link will not be printed, because an owner already
+exists. Just repeat the command from step 2. Rooms, members and unexpired messages are in
+place.
 
-## Начать с чистого листа
+## Starting from scratch
 
 ```bash
 kill $(cat ~/anteroom-test/anteroom.pid)
 rm -rf ~/anteroom-test/data
 ```
 
-Сотрёт базу, ключ сервера и вложения. При следующем запуске всё создастся заново и ссылка
-владельца напечатается снова. Личности устройств живут в браузере отдельно — их это не
-затронет, но в новых комнатах они получат другие карты.
+This erases the database, the server key and the attachments. Everything is recreated on the
+next start and the owner link is printed again. Device identities live separately in the
+browser and are unaffected — but they will get different cards in the new rooms.
 
-## Убрать совсем
+## Removing it completely
 
 ```bash
 kill $(cat ~/anteroom-test/anteroom.pid)
 rm -rf ~/anteroom-test ~/messenger.jar ~/SHA256SUMS
 ```
 
-В системе не останется ничего: сервисов не заводили, в автозагрузку не прописывали,
-портов наружу не открывали.
+Nothing is left on the system: no service was installed, nothing was added to autostart, no
+ports were opened.
 
 ---
 
-## Если что-то не так
+## If something is wrong
 
-**`java: command not found` или версия ниже 21.** Поставить JRE 21:
-`apt install openjdk-21-jre-headless` или аналог для вашей системы.
+**`java: command not found`, or a version below 21.** Install JRE 21:
+`apt install openjdk-21-jre-headless` or the equivalent for your system.
 
-**В журнале «отказ по правам на server.key».** Права на файл слишком открытые:
-`chmod 600 ~/anteroom-test/data/server.key`. Это не придирка — подмена этого ключа позволяет
-выдавать себя за сервер при входе.
+**"отказ по правам на server.key" in the log.** The file's permissions are too open:
+`chmod 600 ~/anteroom-test/data/server.key`. This is not pedantry — substituting this key
+allows impersonating the server during login.
 
-**Порт занят.** Поменять `--server.port=8080` на другой и не забыть про туннель и
-`--app.public-url`: все три числа должны совпадать.
+**Port in use.** Change `--server.port=8080` to something else and do not forget the tunnel and
+`--app.public-url`: all three numbers have to agree.
 
-**Кнопка «Создать ссылку» ничего не делает, в консоли браузера ошибка про `crypto`.**
-Открыли не через туннель. См. «Почему через туннель».
+**The "create link" button does nothing, and the browser console shows an error about
+`crypto`.** You did not go through the tunnel. See "Why through a tunnel".
 
-**Страница открылась, но соединение не устанавливается.** Туннель прокидывает только TCP-порт,
-WebSocket по нему работает штатно — проверьте, что туннель жив и порт в адресе тот же.
+**The page opens but the connection never establishes.** The tunnel forwards a TCP port and
+WebSocket works over it fine — check that the tunnel is alive and that the port in the address
+is the same one.
 
 ---
 
-## Чего в этом режиме нет
+## What this mode does not have
 
-- **Автозагрузки.** После перезагрузки машины сервер не поднимется, это сделано намеренно.
-- **TLS.** Наружу ничего не смотрит, шифрует SSH.
-- **Резервных копий.** Для теста не нужно; для постоянной работы — `deploy/backup.sh`.
-- **Ограничения размера тела запроса на прокси.** Прокси нет, вложения ограничивает само
-  приложение: 20 МБ на файл.
+- **Autostart.** The server does not come up after a reboot; this is deliberate.
+- **TLS.** Nothing faces outward, SSH does the encrypting.
+- **Backups.** Not needed for a test; for permanent operation see `deploy/backup.sh`.
+- **A request body limit on the proxy.** There is no proxy — the application itself limits
+  attachments to 20 MB.

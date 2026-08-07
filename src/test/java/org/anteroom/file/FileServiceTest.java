@@ -1,5 +1,7 @@
 package org.anteroom.file;
 
+import org.anteroom.Refusal;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -160,7 +162,7 @@ class FileServiceTest {
 
         assertThatThrownBy(() -> files.issue(room(), DEVICE, 1, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("комнат");
+                .hasMessageContaining(Refusal.ROOM_FULL);
     }
 
     @Test
@@ -182,7 +184,7 @@ class FileServiceTest {
 
         assertThatThrownBy(() -> files.issue(third, DEVICE, 1, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("сервер");
+                .hasMessageContaining(Refusal.DISK_FULL);
     }
 
     @Test

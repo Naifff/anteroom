@@ -8,7 +8,8 @@ package org.anteroom.invite;
  */
 public record Redemption(boolean accepted, String reason, String roomId, String role, byte[] wrappedKey) {
 
-    public static final String REFUSED = "приглашение недействительно";
+    /** Код, а не фраза: формулировку показывает браузер на своём языке. */
+    public static final String REFUSED = "invite-invalid";
 
     public static Redemption refused() {
         return new Redemption(false, REFUSED, null, null, null);

@@ -13,7 +13,7 @@ const SEED_BYTES = 32;
 
 export function seedToWords(seed) {
     if (seed.length !== SEED_BYTES) {
-        throw new Error(`seed должен быть ${SEED_BYTES} байта, а не ${seed.length}`);
+        throw new Error('x.seed-size');
     }
 
     const bits = toBits(seed) + checksumBits(seed);
@@ -27,14 +27,19 @@ export function seedToWords(seed) {
 export function wordsToSeed(words) {
     const normalized = words.map((word) => word.trim().toLowerCase());
     if (normalized.length !== WORD_COUNT) {
-        throw new Error(`нужно ${WORD_COUNT} слова, а не ${normalized.length}`);
+        throw new Error('x.words-count');
     }
 
     let bits = '';
     for (const word of normalized) {
         const index = BIP39_ENGLISH.indexOf(word);
         if (index < 0) {
-            throw new Error(`слова «${word}» нет в списке`);
+            // Код кода кодом, а какое именно слово не подошло — единственное, что помогает
+            // человеку, переписывающему двадцать четыре слова с бумаги. Подстановка едет
+            // рядом с кодом, а не внутри текста: текст переводится, слово нет.
+            const failure = new Error('x.words-unknown');
+            failure.vars = { word };
+            throw failure;
         }
         bits += index.toString(2).padStart(11, '0');
     }
@@ -45,7 +50,7 @@ export function wordsToSeed(words) {
     }
 
     if (bits.slice(SEED_BYTES * 8) !== checksumBits(seed)) {
-        throw new Error('контрольная сумма не сходится: проверьте порядок и написание слов');
+        throw new Error('x.words-checksum');
     }
     return seed;
 }

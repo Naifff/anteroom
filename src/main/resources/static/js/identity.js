@@ -34,7 +34,7 @@ export function newSeed() {
  */
 export function keysFromSeed(seed) {
     if (seed.length !== 32) {
-        throw new Error(`seed должен быть 32 байта, а не ${seed.length}`);
+        throw new Error('x.seed-size');
     }
 
     const signing = sodium.crypto_sign_seed_keypair(seed);

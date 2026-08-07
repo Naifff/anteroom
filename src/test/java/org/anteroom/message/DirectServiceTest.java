@@ -1,5 +1,7 @@
 package org.anteroom.message;
 
+import org.anteroom.Refusal;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -118,7 +120,7 @@ class DirectServiceTest {
 
         assertThatThrownBy(() -> direct.save(quiet, "шифротекст".getBytes(), envelopes(), null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("личные");
+                .hasMessageContaining(Refusal.DM_DISABLED);
     }
 
     @Test
