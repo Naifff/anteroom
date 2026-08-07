@@ -6,7 +6,12 @@ After=network.target
 [Service]
 User=messenger
 Group=messenger
-ExecStart=/usr/bin/java -jar /opt/messenger/messenger.jar --app.data-dir=/var/lib/messenger
+# forward-headers-strategy обязателен, пока впереди прокси с TLS: без него приложение
+# видит схему http, браузер шлёт Origin https, и Spring отклоняет апгрейд WebSocket
+# с кодом 403 — страница открывается, а лента молча не оживает.
+ExecStart=/usr/bin/java -jar /opt/messenger/messenger.jar \
+    --app.data-dir=/var/lib/messenger \
+    --server.forward-headers-strategy=framework
 Restart=on-failure
 RestartSec=5
 

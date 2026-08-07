@@ -36,6 +36,11 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 .tab{border:0;cursor:pointer;background:none;color:var(--ink-3);font-family:var(--sans);
   font-size:13px;padding:6px 10px;border-radius:999px}
 .tab[aria-selected="true"]{background:var(--surface);color:var(--ink)}
+/* Точка непрочитанного. Не --ember: акцент зарезервирован под необратимые действия,
+   а «вам написали» к ним не относится. */
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ink);
+  margin-left:6px;vertical-align:middle}
+.thread .dot{margin-left:0;margin-right:2px;flex:0 0 6px}
 .threadbar{display:flex;align-items:center;gap:8px;padding:0 16px 6px;font-size:13px;color:var(--ink-2)}
 .back{border:0;cursor:pointer;background:var(--surface);color:var(--ink);border-radius:999px;
   width:28px;height:28px;font-size:14px;line-height:1}
@@ -48,11 +53,19 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 .thread .last{color:var(--ink-3);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mine{align-self:flex-end}
 .mine .who{text-align:right}
+/* Свой пузырь чуть светлее. Акцентный --ember сюда не брать: он зарезервирован
+   под необратимые действия, и «своё сообщение» на него никак не тянет. */
+.mine .bubble{background:var(--surface-hi)}
 .empty{color:var(--ink-3);font-size:13px;padding:18px 2px;line-height:1.5}
-.msg{padding-top:12px}
+/* Ограничение ширины держится на строке, а не на пузыре. У .mine строка не
+   растягивается (align-self:flex-end), и процент от неё самой браузер разрешает
+   в минимальную ширину содержимого — то есть в самое длинное слово. Тогда каждое
+   слово уезжает на свою строку. У строки же процент считается от ленты, а её
+   ширина определённая. */
+.msg{padding-top:12px;max-width:83%}
 .who{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-bottom:3px}
 .bubble{background:var(--surface);border-radius:16px;padding:9px 13px;font-size:15.5px;
-  word-wrap:break-word;display:inline-block;max-width:83%}
+  word-wrap:break-word;overflow-wrap:anywhere;display:inline-block;max-width:100%}
 .bubble.bad{color:var(--ink-3);font-family:var(--mono);font-size:12.5px}
 .file{display:flex;flex-direction:column;gap:2px}
 .file .name{word-break:break-all}
@@ -130,7 +143,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 
   <div class="tabs hidden" id="tabs">
     <button type="button" class="tab" id="tabRoom" aria-selected="true">Лента</button>
-    <button type="button" class="tab" id="tabDm" aria-selected="false">Личное</button>
+    <button type="button" class="tab" id="tabDm" aria-selected="false">Личное<span class="dot hidden" id="dmDot"></span></button>
   </div>
   <div class="threadbar hidden" id="threadBar">
     <button type="button" class="back" id="back" aria-label="Назад">←</button>
@@ -856,7 +869,9 @@ function render(frame) {
   lastSeenId = Math.max(lastSeenId, frame.id);
 
   const row = document.createElement('div');
-  row.className = 'msg';
+  // Своё справа, чужое слева — как в любом мессенджере. Сравнение по ключу подписи,
+  // а не по карте: карта приезжает составом комнаты и до него ещё не известна.
+  row.className = frame.sender === me() ? 'msg mine' : 'msg';
   const who = document.createElement('div');
   who.className = 'who';
   // Карта, а не отпечаток: она и есть имя участника в комнате. Отпечаток остаётся
@@ -1039,6 +1054,8 @@ function onWiped() {
   shown.clear();
   threads.clear();
   seenDirect.clear();
+  unread.clear();
+  paintUnread();
   lastSeenId = 0;
   lastSeenDirect = 0;
   $('status').textContent = 'переписка стёрта';
@@ -1111,6 +1128,19 @@ let lastSeenDirect = 0;
 const dmPublic = new Map();     // устройство -> публичный ключ переписки этой эпохи
 const threads = new Map();      // устройство собеседника -> список реплик
 const seenDirect = new Set();
+/**
+ * Нити, где есть непрочитанное. Помечается то, что пришло не от нас и не в открытую
+ * сейчас нить; снимается при входе в нить.
+ *
+ * Перезагрузка вкладки обнуляет lastSeenDirect, поэтому после неё вся переписка
+ * приезжает заново и снова считается непрочитанной. Это честнее, чем показывать
+ * пусто: в этой сессии её действительно ещё не открывали.
+ */
+const unread = new Set();
+
+function paintUnread() {
+  $('dmDot').classList.toggle('hidden', unread.size === 0);
+}
 
 const me = () => sodium.to_base64(keys.signPublic, B64);
 
@@ -1196,6 +1226,11 @@ function onDirect(frame) {
   threads.get(other).push({ id: frame.id, mine, body: note.body, expiresAt: frame.expiresAt });
   threads.get(other).sort((a, b) => a.id - b.id);
 
+  if (!mine && !(view === 'thread' && peer === other)) {
+    unread.add(other);
+  }
+  paintUnread();
+
   if (view !== 'room') renderView();
 }
 
@@ -1218,6 +1253,12 @@ function drawThreadList() {
     const card = document.createElement('span');
     card.className = 'card';
     card.textContent = cardName(cards.get(device));
+
+    if (unread.has(device)) {
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      row.append(dot);
+    }
 
     const last = document.createElement('span');
     last.className = 'last';
@@ -1293,6 +1334,9 @@ function renderView() {
   $('attach').disabled = view !== 'room' || !roomKey;
 
   if (view === 'thread') {
+    // Открыли нить — значит прочитали.
+    unread.delete(peer);
+    paintUnread();
     $('threadWho').textContent = 'Личное · ' + cardName(cards.get(peer));
     drawThread();
   } else if (view === 'dm') {
