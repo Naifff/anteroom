@@ -127,6 +127,15 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
    сканер не видит код. Поле вокруг рисует сам генератор. */
 .qr-wrap{margin-top:12px;background:#fff;border-radius:12px;padding:10px;display:flex;justify-content:center}
 .qr-wrap canvas,.qr-wrap video{width:100%;max-width:260px;height:auto;display:block;border-radius:6px}
+/* Видоискатель — холст, который мы рисуем сами, а не сам <video>.
+   Причина не в красоте: кадры для распознавания и так проходят через холст, значит
+   нарисованный кадр виден ровно тогда, когда он читается. Элемент video, положенный
+   на белый фон, при неотрисовке даёт белый прямоугольник, неотличимый от сломанной
+   камеры — на этом споткнулись при первой живой проверке.
+   Видео остаётся в разметке размером 1px: display:none часть мобильных браузеров
+   считает поводом остановить поток. */
+.scan-wrap{background:var(--bg)}
+.scan-wrap video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .code{font-family:var(--mono);font-size:26px;letter-spacing:.22em;text-align:center;
   margin-top:12px;color:var(--ink)}
 .hidden{display:none}
@@ -238,7 +247,10 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
     <div class="msgline hidden" id="importMsg"></div>
 
     <div id="scanPanel" class="hidden">
-      <div class="qr-wrap"><video id="scanVideo" playsinline muted></video></div>
+      <div class="qr-wrap scan-wrap hidden" id="scanBox">
+        <canvas id="scanPreview"></canvas>
+        <video id="scanVideo" playsinline muted></video>
+      </div>
       <div class="msgline" id="scanMsg" data-i18n="scan.aim"></div>
       <input class="field hidden" id="scanCode" inputmode="numeric" autocomplete="one-time-code"
              maxlength="6" data-i18n-placeholder="scan.code">
@@ -535,6 +547,12 @@ function stopScan() {
   camera?.getTracks().forEach((track) => track.stop());
   camera = null;
   $('scanVideo').srcObject = null;
+  // Холст обнуляется, а не просто прячется: последний кадр с камеры — это картинка
+  // комнаты, в которой сидит человек, и держать её в памяти вкладки незачем.
+  const preview = $('scanPreview');
+  preview.getContext('2d')?.clearRect(0, 0, preview.width, preview.height);
+  preview.width = preview.height = 0;
+  $('scanBox').classList.add('hidden');
   $('scanPanel').classList.add('hidden');
   $('scanCode').value = '';
   $('scanCode').classList.add('hidden');
@@ -566,8 +584,11 @@ $('startScan').addEventListener('click', async () => {
     await video.play();
     message.textContent = t('scan.aim');
 
-    const frame = document.createElement('canvas');
+    // Один холст на два дела: он же видоискатель, он же кадр для распознавания.
+    // Разводить их на два — значит однажды показать человеку не то, что читаем.
+    const frame = $('scanPreview');
     const context = frame.getContext('2d', { willReadFrequently: true });
+    $('scanBox').classList.remove('hidden');
     scanning = true;
 
     const tick = () => {
@@ -584,6 +605,9 @@ $('startScan').addEventListener('click', async () => {
           camera?.getTracks().forEach((track) => track.stop());
           camera = null;
           video.srcObject = null;
+          // Видоискатель убирается целиком. Раньше на его месте оставался белый
+          // прямоугольник, и успешное сканирование выглядело как отказавшая камера.
+          $('scanBox').classList.add('hidden');
           // Снять «плохой» класс обязательно: иначе успех рисуется акцентным цветом,
           // оставшимся от прошлой ошибки, а он зарезервирован под необратимое.
           message.classList.remove('bad');
