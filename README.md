@@ -6,7 +6,8 @@ deleted when their lifetime expires.
 
 You host it yourself: one jar file and a data directory.
 
-The interface is in Russian. Russian documentation: [README.ru.md](README.ru.md).
+The interface is in English by default and can be switched to Russian from the key sheet.
+Russian documentation: [README.ru.md](README.ru.md).
 
 ---
 
@@ -227,12 +228,20 @@ recipient's slot holds a real sealed box, the rest hold random bytes of the same
 box output is indistinguishable from random, so the server does not learn the recipient. The
 schema has no sender or recipient column; the signature is inside the ciphertext.
 
+**Language.** English by default, Russian by a switch in the key sheet; the choice lives in
+`localStorage` and switching reloads the page. There is no auto-detection from the browser
+locale: it would turn one link into two different pages for two people and make bug reports
+unverifiable. Server refusals travel as **codes**, not sentences — the server does not know
+which language the browser chose, and a sentence assembled there cannot be translated. The
+dictionary is a single file, [`static/js/i18n.js`](src/main/resources/static/js/i18n.js).
+
 **Crypto is libsodium in the browser**, vendored into the jar rather than loaded from a CDN.
 The server does not participate. Ed25519 verification on the server side is the JDK's own
 implementation; no third-party crypto library is pulled in.
 
-The design decisions and the reasoning behind them are in [CLAUDE.md](CLAUDE.md); the work
-plan is in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Both are in Russian.
+The design decisions and the reasoning behind them are in [CLAUDE.md](CLAUDE.md), which is in
+Russian. It is the one document to read before changing anything: it records why each choice
+was made and which invariants a change must not break.
 
 ---
 

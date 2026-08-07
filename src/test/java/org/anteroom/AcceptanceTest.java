@@ -460,7 +460,7 @@ class AcceptanceTest {
 
         assertThatThrownBy(() -> tight.issue(room, "устройство-хозяин", 1, null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("в комнате кончилось место");
+                .hasMessageContaining(Refusal.ROOM_FULL);
     }
 
     // ---- 12 ---------------------------------------------------------------

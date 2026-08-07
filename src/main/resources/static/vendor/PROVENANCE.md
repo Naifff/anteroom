@@ -8,13 +8,17 @@
 |---|---|---|---|
 | `libsodium-sumo.js` | `libsodium-sumo` | 0.8.4 | ISC |
 | `libsodium-wrappers-sumo.js` | `libsodium-wrappers-sumo` | 0.8.4 | ISC |
-| `bip39-english.js` | `bitcoin/bips`, `bip-0039/english.txt` | — | — |
+| `bip39-english.js` | `bitcoin/bips`, `bip-0039/english.txt` | — | MIT |
 | `qrcode-generator.js` | `qrcode-generator` | 2.0.4 | MIT |
 | `jsQR.js` | `jsqr` | 1.4.0 | Apache-2.0 |
 
 Тексты лицензий: `LICENSE.libsodium.js`, `LICENSE.jsQR`. У `qrcode-generator` отдельного
 файла лицензии в пакете нет, текст и копирайт Kazuhiko Arase лежат в шапке самого
 `qrcode-generator.js` — не срезать при правках.
+
+У списка слов отдельного файла лицензии тоже нет: он часть самого BIP-39, а тот объявляет
+лицензию в собственной шапке — `License: MIT` в преамбуле `bip-0039.mediawiki`. Отдельного
+копирайта на `english.txt` в репозитории `bitcoin/bips` не выставлено.
 
 ## libsodium
 

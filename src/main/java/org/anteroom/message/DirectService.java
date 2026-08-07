@@ -4,6 +4,7 @@ import java.sql.PreparedStatement;
 import java.time.Clock;
 import java.util.List;
 
+import org.anteroom.Refusal;
 import org.anteroom.room.CardDealer;
 import org.anteroom.room.Room;
 import org.anteroom.room.RoomService;
@@ -52,7 +53,7 @@ public class DirectService {
 
     public StoredDirect save(Room room, byte[] ciphertext, byte[] envelopes, Long requestedTtlSeconds) {
         if (!room.directAllowed()) {
-            throw new IllegalArgumentException("в этой комнате личные сообщения запрещены");
+            throw new Refusal(Refusal.DM_DISABLED);
         }
         if (ciphertext.length > MessageService.MAX_CIPHERTEXT) {
             throw new IllegalArgumentException(

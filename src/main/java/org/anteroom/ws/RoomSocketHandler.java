@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 
+import org.anteroom.Refusal;
 import org.anteroom.auth.ProofOfWork;
 import org.anteroom.auth.RateLimiter;
 import org.anteroom.device.DeviceService;
@@ -105,7 +106,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         try {
             frame = json.readTree(message.getPayload());
         } catch (IOException e) {
-            fail(session, "кадр не разбирается");
+            fail(session, Refusal.BAD_FRAME);
             return;
         }
 
@@ -129,16 +130,21 @@ public class RoomSocketHandler extends TextWebSocketHandler {
                 case "dm-key" -> dmKey(session, device, frame);
                 case "dm" -> dm(session, device, frame);
                 case "send" -> send(session, device, frame);
-                default -> fail(session, "неизвестная операция");
+                default -> fail(session, Refusal.UNKNOWN_OP);
             }
         } catch (FileTooLargeException e) {
-            fail(session, e.getMessage());
+            fail(session, Refusal.FILE_TOO_LARGE);
         } catch (DeckSpentException e) {
             // Не ошибка выдачи, а конец жизни комнаты — и называется отдельно, чтобы
             // интерфейс мог сказать это словами, а не показать общий отказ.
-            fail(session, "колода кончилась");
+            fail(session, Refusal.DECK_SPENT);
+        } catch (Refusal e) {
+            fail(session, e.code());
         } catch (IllegalArgumentException e) {
-            fail(session, e.getMessage());
+            // Отказ без своего кода. Наружу — общий, подробность в журнал: она может
+            // говорить о внутреннем устройстве больше, чем стоит показывать.
+            log.debug("Отказ без кода: {}", e.toString());
+            fail(session, Refusal.UNKNOWN);
         }
     }
 
@@ -147,7 +153,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         // погашенное приглашение: без него любой, кто открыл адрес, заводил бы здесь
         // свои комнаты.
         if (!devices.admitted(device)) {
-            throw new IllegalArgumentException("нужно приглашение");
+            throw new Refusal(Refusal.INVITE_REQUIRED);
         }
         // Потолок и на устройство, и на адрес: одно устройство не должно заводить комнаты
         // в цикле, а один адрес — плодить устройства и обходить первый счётчик.
@@ -345,10 +351,10 @@ public class RoomSocketHandler extends TextWebSocketHandler {
 
         String outcast = frame.path("device").asText();
         if (outcast.equals(device)) {
-            throw new IllegalArgumentException("себя исключить нельзя");
+            throw new Refusal(Refusal.SELF_REMOVE);
         }
         if (rooms.role(roomId, outcast) == null) {
-            throw new IllegalArgumentException("нет доступа к комнате");
+            throw new Refusal(Refusal.NO_ACCESS);
         }
 
         rooms.remove(roomId, outcast);
@@ -384,7 +390,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
     private void wipe(WebSocketSession session, String device, JsonNode frame) throws IOException {
         String roomId = frame.path("room").asText();
         if (!"owner".equals(rooms.role(roomId, device))) {
-            throw new IllegalArgumentException("нет доступа к комнате");
+            throw new Refusal(Refusal.NO_ACCESS);
         }
 
         files.wipeRoom(roomId);
@@ -561,7 +567,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
             return;
         }
         if (!work.redeem(frame.path("salt").asText(null), frame.path("counter").asText(null))) {
-            throw new IllegalArgumentException("пропуск не принят — пересчитайте задачу");
+            throw new Refusal(Refusal.WORK_REJECTED);
         }
     }
 
@@ -572,7 +578,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
 
     private void limit(String key, int allowance, Duration window) {
         if (!limits.allow(key, allowance, window)) {
-            throw new IllegalArgumentException("слишком часто — подождите и повторите");
+            throw new Refusal(Refusal.TOO_OFTEN);
         }
     }
 
@@ -581,10 +587,17 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         return stored == null ? "" : (String) stored;
     }
 
-    private void fail(WebSocketSession session, String reason) throws IOException {
+    /**
+     * Наружу уходит код, а текст остаётся здесь.
+     *
+     * <p>Формулировку показывает браузер на выбранном в нём языке — сервер этого языка не
+     * знает и знать не должен. Заодно из кадра пропадает всё, что можно было бы прочитать
+     * как подробность об устройстве комнаты.
+     */
+    private void fail(WebSocketSession session, String code) throws IOException {
         ObjectNode frame = json.createObjectNode();
         frame.put("op", "error");
-        frame.put("reason", reason);
+        frame.put("code", code);
         write(session, frame);
     }
 
@@ -595,7 +608,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
     private void requireIssuer(String roomId, String device) {
         String role = rooms.role(roomId, device);
         if (!"owner".equals(role) && !"admin".equals(role)) {
-            throw new IllegalArgumentException("нет доступа к комнате");
+            throw new Refusal(Refusal.NO_ACCESS);
         }
     }
 
@@ -603,7 +616,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         if (rooms.role(roomId, device) == null) {
             // Один и тот же отказ на «нет такой комнаты» и «вы не участник»: различать их
             // снаружи означало бы отдавать номера существующих комнат перебором.
-            throw new IllegalArgumentException("нет доступа к комнате");
+            throw new Refusal(Refusal.NO_ACCESS);
         }
     }
 

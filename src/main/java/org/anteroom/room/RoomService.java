@@ -7,6 +7,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.anteroom.Refusal;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -140,7 +141,7 @@ public class RoomService {
         Integer card = jdbc.query("SELECT card FROM member WHERE room_id = ? AND pubkey_sign = ?",
                 rs -> rs.next() ? rs.getInt(1) : null, roomId, pubkeySign);
         if (card == null) {
-            throw new IllegalArgumentException("устройства нет в комнате");
+            throw new Refusal(Refusal.NOT_A_MEMBER);
         }
         return card;
     }

@@ -1,12 +1,12 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!-- Фрагмент URL Referer и так не переносит, но и путь наружу отдавать незачем. -->
 <meta name="referrer" content="no-referrer">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>Вылазка</title>
+<title>Anteroom</title>
 <style>
 :root{
   --bg:#191817; --surface:#211F1E; --surface-hi:#2B2827;
@@ -137,16 +137,16 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 
 <div class="app">
   <div class="top">
-    <div class="room" id="roomTitle">Вылазка</div>
+    <div class="room" id="roomTitle" data-i18n="app.title" data-i18n-title="app.title"></div>
     <button class="me-chip" id="meChip" aria-haspopup="dialog"><b id="seats">…</b> · <span id="meFp">…</span></button>
   </div>
 
   <div class="tabs hidden" id="tabs">
-    <button type="button" class="tab" id="tabRoom" aria-selected="true">Лента</button>
-    <button type="button" class="tab" id="tabDm" aria-selected="false">Личное<span class="dot hidden" id="dmDot"></span></button>
+    <button type="button" class="tab" id="tabRoom" aria-selected="true"><span data-i18n="tab.room"></span></button>
+    <button type="button" class="tab" id="tabDm" aria-selected="false"><span data-i18n="tab.dm"></span><span class="dot hidden" id="dmDot"></span></button>
   </div>
   <div class="threadbar hidden" id="threadBar">
-    <button type="button" class="back" id="back" aria-label="Назад">←</button>
+    <button type="button" class="back" id="back" data-i18n-aria="back.aria">←</button>
     <span id="threadWho"></span>
   </div>
 
@@ -154,115 +154,104 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
   <div class="feed hidden" id="dmPane"></div>
 
   <form class="composer" id="composer">
-    <input id="text" placeholder="Сообщение" autocomplete="off" disabled>
-    <button type="button" class="ttl-pick" id="ttlPick" aria-label="Срок жизни">48 ч</button>
-    <button type="button" class="clip" id="attach" aria-label="Вложить файл" disabled>⎘</button>
+    <input id="text" data-i18n-placeholder="composer.placeholder" autocomplete="off" disabled>
+    <button type="button" class="ttl-pick" id="ttlPick" data-i18n-aria="ttl.aria"></button>
+    <button type="button" class="clip" id="attach" data-i18n-aria="attach.aria" disabled>⎘</button>
     <input type="file" id="file" class="hidden">
-    <button class="icon" id="send" aria-label="Отправить" disabled>↑</button>
+    <button class="icon" id="send" data-i18n-aria="send.aria" disabled>↑</button>
   </form>
-  <div class="note" id="status">загрузка…</div>
+  <div class="note" id="status" data-i18n="status.loading"></div>
 
   <div class="backdrop hidden" id="backdrop"></div>
-  <div class="sheet hidden" id="sheet" role="dialog" aria-modal="true" aria-label="Ваш ключ">
-    <div class="t1">Ваш ключ</div>
+  <div class="sheet hidden" id="sheet" role="dialog" aria-modal="true" data-i18n-aria="sheet.title">
+    <div class="t1" data-i18n="sheet.title"></div>
     <div class="fp" id="fingerprint"></div>
-    <p id="iosHint" class="hidden">
-      Safari на iOS чистит данные сайта примерно через неделю без визита, и ключ пропадёт.
-      Добавьте страницу на домашний экран — на установленные так сайты это не действует.
-    </p>
+    <p id="iosHint" class="hidden" data-i18n="ios.hint"></p>
 
-    <h4>Экспорт</h4>
-    <p>Сделайте это сейчас. Без экспорта потеря браузера — потеря доступа ко всем комнатам:
-      сервер не хранит ни ключа, ни способа его вывести.</p>
+    <h4 data-i18n="export.head"></h4>
+    <p data-i18n="export.why"></p>
 
     <div class="row">
-      <button class="act" id="showWords">Показать 24 слова</button>
-      <button class="act" id="saveFile">Скачать key.enc</button>
-      <button class="act" id="showQr">Перенести на устройство</button>
+      <button class="act" id="showWords" data-i18n="words.show"></button>
+      <button class="act" id="saveFile" data-i18n="keyfile.save"></button>
+      <button class="act" id="showQr" data-i18n="transfer.show"></button>
     </div>
 
     <div id="qrPanel" class="hidden">
-      <div class="qr-wrap"><canvas id="qrCanvas" aria-label="Код переноса"></canvas></div>
+      <div class="qr-wrap"><canvas id="qrCanvas" data-i18n-aria="transfer.aria"></canvas></div>
       <div class="code" id="transferCode"></div>
       <div class="countdown" id="qrCountdown"></div>
-      <p>На новом устройстве откройте этот же адрес, «Сканировать код», и назовите
-        шесть цифр голосом. В самом коде их нет: снявший экран через плечо без них
-        ничего не откроет.</p>
+      <p data-i18n="transfer.why"></p>
       <div class="msgline hidden" id="qrMsg"></div>
     </div>
 
     <div id="wordsPanel" class="hidden">
       <div class="words masked" id="wordsBox"><ol id="wordsList"></ol></div>
       <div class="countdown" id="countdown"></div>
-      <p>Перепишите на бумагу по порядку. Не фотографируйте: снимок уедет в облако.</p>
+      <p data-i18n="words.why"></p>
     </div>
 
     <div id="filePanel" class="hidden">
-      <input class="field" id="passphrase" type="password" placeholder="Парольная фраза" autocomplete="new-password">
+      <input class="field" id="passphrase" type="password" data-i18n-placeholder="keyfile.passphrase" autocomplete="new-password">
       <div class="row">
-        <button class="act" id="doSaveFile">Зашифровать и скачать</button>
+        <button class="act" id="doSaveFile" data-i18n="keyfile.encrypt"></button>
       </div>
-      <p>Файл без фразы бесполезен, фраза без файла — тоже. Шифрование Argon2id занимает
-        секунду-другую и требует памяти.</p>
+      <p data-i18n="keyfile.why"></p>
       <div class="msgline hidden" id="fileMsg"></div>
     </div>
 
-    <h4 id="inviteHead" class="hidden">Пригласить</h4>
-    <p id="inviteWhy" class="hidden">Ссылку передавайте целиком и по каналу, которому доверяете:
-      до погашения она открывает комнату любому, кто её открыл. После — становится бесполезной,
-      даже если её сохранили.</p>
+    <h4 id="inviteHead" class="hidden" data-i18n="invite.head"></h4>
+    <p id="inviteWhy" class="hidden" data-i18n="invite.why"></p>
     <div class="row hidden" id="inviteRow">
-      <button class="act" id="makeInvite">Создать ссылку</button>
+      <button class="act" id="makeInvite" data-i18n="invite.make"></button>
     </div>
     <textarea class="field hidden" id="inviteLink" rows="3" readonly></textarea>
 
-    <h4>Одноразовая записка</h4>
-    <p>Текст уедет на сервер зашифрованным, ключ останется в ссылке и туда не попадёт.
-      Первый, кто нажмёт кнопку на странице записки, увидит текст — и записка исчезнет.
-      Первым может оказаться не адресат.</p>
-    <textarea class="field" id="onceText" rows="3" placeholder="Что показать ровно один раз"></textarea>
+    <h4 data-i18n="once.head"></h4>
+    <p data-i18n="once.why"></p>
+    <textarea class="field" id="onceText" rows="3" data-i18n-placeholder="once.placeholder"></textarea>
     <div class="row">
-      <button class="act" id="makeOnce" disabled>Создать ссылку</button>
+      <button class="act" id="makeOnce" data-i18n="once.make" disabled></button>
     </div>
     <textarea class="field hidden" id="onceLink" rows="3" readonly></textarea>
 
-    <h4 id="moderHead" class="hidden">Состав комнаты</h4>
-    <p id="moderWhy" class="hidden">Исключение поднимает эпоху ключа: новое исключённый уже не
-      прочитает. Всё, что он успел прочитать раньше, останется у него — перешифровать прошлое
-      невозможно. Его карта в колоду не вернётся.</p>
+    <h4 id="moderHead" class="hidden" data-i18n="moder.head"></h4>
+    <p id="moderWhy" class="hidden" data-i18n="moder.why"></p>
     <div id="moderList"></div>
 
-    <h4 id="wipeHead" class="hidden">Стереть переписку</h4>
-    <p id="wipeWhy" class="hidden">Сервер немедленно удалит все сообщения, записки и вложения
-      этой комнаты. У тех, у кого вкладка открыта, лента опустеет. Копии, снятые до этого,
-      никуда не денутся.</p>
+    <h4 id="wipeHead" class="hidden" data-i18n="wipe.head"></h4>
+    <p id="wipeWhy" class="hidden" data-i18n="wipe.why"></p>
     <div class="row hidden" id="wipeRow">
-      <button class="act danger" id="doWipe">Стереть всё</button>
+      <button class="act danger" id="doWipe" data-i18n="wipe.do"></button>
     </div>
 
-    <h4>У меня уже есть ключ</h4>
-    <p>Импорт заменит ключ на этом устройстве. Прежняя личность, если она не выгружена,
-      будет потеряна безвозвратно.</p>
-    <textarea class="field" id="importWords" rows="3" placeholder="24 слова через пробел"></textarea>
+    <h4 data-i18n="import.head"></h4>
+    <p data-i18n="import.why"></p>
+    <textarea class="field" id="importWords" rows="3" data-i18n-placeholder="import.words"></textarea>
     <input class="field" id="importFile" type="file" accept=".enc">
-    <input class="field" id="importPass" type="password" placeholder="Фраза от файла" autocomplete="off">
+    <input class="field" id="importPass" type="password" data-i18n-placeholder="import.pass" autocomplete="off">
     <div class="row">
-      <button class="act danger" id="doImport">Заменить ключ</button>
-      <button class="act" id="startScan">Сканировать код</button>
-      <button class="act" id="closeSheet">Закрыть</button>
+      <button class="act danger" id="doImport" data-i18n="import.do"></button>
+      <button class="act" id="startScan" data-i18n="scan.start"></button>
+      <button class="act" id="closeSheet" data-i18n="sheet.close"></button>
     </div>
     <div class="msgline hidden" id="importMsg"></div>
 
     <div id="scanPanel" class="hidden">
       <div class="qr-wrap"><video id="scanVideo" playsinline muted></video></div>
-      <div class="msgline" id="scanMsg">наведите камеру на код со старого устройства</div>
+      <div class="msgline" id="scanMsg" data-i18n="scan.aim"></div>
       <input class="field hidden" id="scanCode" inputmode="numeric" autocomplete="one-time-code"
-             maxlength="6" placeholder="Шесть цифр со старого экрана">
+             maxlength="6" data-i18n-placeholder="scan.code">
       <div class="row">
-        <button class="act danger hidden" id="doScanImport">Заменить ключ</button>
-        <button class="act" id="stopScan">Отменить</button>
+        <button class="act danger hidden" id="doScanImport" data-i18n="import.do"></button>
+        <button class="act" id="stopScan" data-i18n="scan.cancel"></button>
       </div>
     </div>
+
+    <!-- Язык последним: он меняется один раз, а стоит выше — отодвигал бы вниз то,
+         ради чего шторку открывают. -->
+    <h4 data-i18n="lang.head"></h4>
+    <div class="row" id="langRow"></div>
   </div>
 </div>
 
@@ -274,11 +263,40 @@ import { packEnvelopes, openSlot, signedPayload } from '/js/direct.js';
 import { seedToWords, wordsToSeed } from '/js/words.js';
 import { encryptSeed, decryptSeed } from '/js/keyfile.js';
 import { encryptFile, decryptFile, MAX_PLAINTEXT } from '/js/attach.js';
+import { t, translateError, applyStatic, currentLanguage, setLanguage, LANGUAGES } from '/js/i18n.js';
 
 await sodium.ready;
 
 const $ = (id) => document.getElementById(id);
 const B64 = sodium.base64_variants.URLSAFE_NO_PADDING;
+
+/* ---------- язык ---------- */
+
+/*
+ * Смена языка перезагружает страницу, а не перерисовывает её. Половина строк живёт
+ * в уже нарисованных узлах — репликах ленты, списке переписок, отказах в статусе, — и
+ * обойти их все на месте значило бы держать второй способ рисования интерфейса, который
+ * расходится с первым при каждой правке. Перезагрузка ничего не теряет: ключ в IndexedDB,
+ * комната во фрагменте, лента приезжает заново.
+ */
+applyStatic();
+
+function drawLanguages() {
+    const row = $('langRow');
+    row.textContent = '';
+    for (const [code, name] of LANGUAGES) {
+        const button = document.createElement('button');
+        button.className = 'act';
+        button.textContent = name;
+        button.disabled = code === currentLanguage();
+        button.addEventListener('click', () => {
+            setLanguage(code);
+            location.reload();
+        });
+        row.append(button);
+    }
+}
+drawLanguages();
 
 /* ---------- личность ---------- */
 
@@ -353,7 +371,7 @@ function hideWords() {
   clearInterval(tick);
   $('wordsBox').classList.add('masked');
   $('countdown').textContent = '';
-  $('showWords').textContent = 'Показать 24 слова';
+  $('showWords').textContent = t('words.show');
   // Слова из DOM убираются, а не просто размываются: размытие это картинка,
   // а не защита, и в дереве страницы они остались бы текстом.
   $('wordsList').replaceChildren();
@@ -369,13 +387,13 @@ function revealWords() {
 
   $('wordsPanel').classList.remove('hidden');
   $('wordsBox').classList.remove('masked');
-  $('showWords').textContent = 'Спрятать';
+  $('showWords').textContent = t('words.hide');
 
   let left = 15;
-  $('countdown').textContent = `спрячется через ${left} с`;
+  $('countdown').textContent = t('words.countdown', { left });
   tick = setInterval(() => {
     left -= 1;
-    $('countdown').textContent = `спрячется через ${left} с`;
+    $('countdown').textContent = t('words.countdown', { left });
   }, 1000);
   hideTimer = setTimeout(hideWords, 15000);
 }
@@ -399,12 +417,12 @@ $('doSaveFile').addEventListener('click', async () => {
 
   if (passphrase.length < 8) {
     message.classList.add('bad');
-    message.textContent = 'фраза короче восьми знаков не защищает файл';
+    message.textContent = t('keyfile.short');
     return;
   }
 
   $('doSaveFile').disabled = true;
-  message.textContent = 'шифрую…';
+  message.textContent = t('keyfile.working');
   try {
     // Уступаем кадр, иначе Argon2id съест поток и «шифрую…» никто не увидит.
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -417,11 +435,11 @@ $('doSaveFile').addEventListener('click', async () => {
     link.click();
     URL.revokeObjectURL(url);
 
-    message.textContent = 'файл скачан';
+    message.textContent = t('keyfile.saved');
     $('passphrase').value = '';
   } catch (e) {
     message.classList.add('bad');
-    message.textContent = `не зашифровалось: ${e.message}`;
+    message.textContent = t('keyfile.failed', { error: translateError(e) });
   } finally {
     $('doSaveFile').disabled = false;
   }
@@ -438,7 +456,7 @@ function loadScript(src) {
       const tag = document.createElement('script');
       tag.src = src;
       tag.onload = resolve;
-      tag.onerror = () => reject(new Error(`не загрузился ${src}`));
+      tag.onerror = () => reject(new Error(src));
       document.head.append(tag);
     }));
   }
@@ -456,7 +474,7 @@ function stopQr() {
   canvas.width = canvas.height = 0;
   $('transferCode').textContent = '';
   $('qrCountdown').textContent = '';
-  $('showQr').textContent = 'Перенести на устройство';
+  $('showQr').textContent = t('transfer.show');
 }
 
 $('showQr').addEventListener('click', async () => {
@@ -468,7 +486,7 @@ $('showQr').addEventListener('click', async () => {
 
   const message = $('qrMsg');
   message.classList.remove('hidden', 'bad');
-  message.textContent = 'готовлю код…';
+  message.textContent = t('transfer.preparing');
   $('qrPanel').classList.remove('hidden');
 
   try {
@@ -482,25 +500,25 @@ $('showQr').addEventListener('click', async () => {
 
     drawQr($('qrCanvas'), payload);
     $('transferCode').textContent = code.replace(/(\d{3})(\d{3})/, '$1 $2');
-    $('showQr').textContent = 'Убрать код';
+    $('showQr').textContent = t('transfer.hide');
     message.classList.add('hidden');
 
     // Две минуты — половина защиты шестизначного кода, поэтому срок гасит картинку
     // сам, без участия человека.
     let left = Math.round(TRANSFER_TTL_MS / 1000);
-    $('qrCountdown').textContent = `код погаснет через ${left} с`;
+    $('qrCountdown').textContent = t('transfer.countdown', { left });
     qrTick = setInterval(() => {
       left -= 1;
-      $('qrCountdown').textContent = `код погаснет через ${left} с`;
+      $('qrCountdown').textContent = t('transfer.countdown', { left });
     }, 1000);
     qrTimer = setTimeout(() => {
       stopQr();
       message.classList.remove('hidden');
-      message.textContent = 'код погас, нажмите ещё раз для нового';
+      message.textContent = t('transfer.expired');
     }, TRANSFER_TTL_MS);
   } catch (e) {
     message.classList.add('bad');
-    message.textContent = e.message;
+    message.textContent = translateError(e);
   }
 });
 
@@ -530,11 +548,11 @@ $('startScan').addEventListener('click', async () => {
   $('scanPanel').classList.remove('hidden');
   const message = $('scanMsg');
   message.classList.remove('bad');
-  message.textContent = 'запрашиваю камеру…';
+  message.textContent = t('scan.requesting');
 
   if (!navigator.mediaDevices?.getUserMedia) {
     message.classList.add('bad');
-    message.textContent = 'камера недоступна: нужен https или localhost';
+    message.textContent = t('scan.insecure');
     return;
   }
 
@@ -546,7 +564,7 @@ $('startScan').addEventListener('click', async () => {
     const video = $('scanVideo');
     video.srcObject = camera;
     await video.play();
-    message.textContent = 'наведите камеру на код со старого устройства';
+    message.textContent = t('scan.aim');
 
     const frame = document.createElement('canvas');
     const context = frame.getContext('2d', { willReadFrequently: true });
@@ -569,7 +587,7 @@ $('startScan').addEventListener('click', async () => {
           // Снять «плохой» класс обязательно: иначе успех рисуется акцентным цветом,
           // оставшимся от прошлой ошибки, а он зарезервирован под необратимое.
           message.classList.remove('bad');
-          message.textContent = 'код найден. назовите шесть цифр со старого экрана';
+          message.textContent = t('scan.found');
           $('scanCode').classList.remove('hidden');
           $('doScanImport').classList.remove('hidden');
           $('scanCode').focus();
@@ -581,14 +599,14 @@ $('startScan').addEventListener('click', async () => {
     requestAnimationFrame(tick);
   } catch (e) {
     message.classList.add('bad');
-    message.textContent = `камера не открылась: ${e.message}`;
+    message.textContent = t('scan.failed', { error: translateError(e) });
   }
 });
 
 $('doScanImport').addEventListener('click', async () => {
   const message = $('scanMsg');
   message.classList.remove('bad');
-  message.textContent = 'проверяю код…';
+  message.textContent = t('scan.checking');
 
   try {
     const { unpackTransfer } = await import('/js/transfer.js');
@@ -604,7 +622,7 @@ $('doScanImport').addEventListener('click', async () => {
     closeSheet();
   } catch (e) {
     message.classList.add('bad');
-    message.textContent = e.message;
+    message.textContent = translateError(e);
   }
 });
 
@@ -613,7 +631,7 @@ $('doScanImport').addEventListener('click', async () => {
 $('doImport').addEventListener('click', async () => {
   const message = $('importMsg');
   message.classList.remove('hidden', 'bad');
-  message.textContent = 'проверяю…';
+  message.textContent = t('import.checking');
 
   try {
     const typed = $('importWords').value.trim();
@@ -625,7 +643,7 @@ $('doImport').addEventListener('click', async () => {
     } else if (picked) {
       restored = await decryptSeed(new Uint8Array(await picked.arrayBuffer()), $('importPass').value);
     } else {
-      throw new Error('нечего импортировать: введите слова или выберите файл');
+      throw new Error('import.nothing');
     }
 
     await saveSeed(restored);
@@ -633,11 +651,11 @@ $('doImport').addEventListener('click', async () => {
     keys = keysFromSeed(seed);
     showIdentity();
 
-    message.textContent = 'ключ заменён';
+    message.textContent = t('import.done');
     closeSheet();
   } catch (e) {
     message.classList.add('bad');
-    message.textContent = e.message;
+    message.textContent = translateError(e);
   }
 });
 
@@ -645,7 +663,10 @@ $('doImport').addEventListener('click', async () => {
 
 const NONCE = sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
 
-const RANKS = ['2','3','4','5','6','7','8','9','10','В','Д','К','Т'];
+// Старшие карты переводятся: J/Q/K/A против В/Д/К/Т. Числа одинаковы везде, а вот
+// «Т» на английской раскладке не читается никак.
+const RANKS = ['2','3','4','5','6','7','8','9','10',
+  t('card.j'), t('card.q'), t('card.k'), t('card.a')];
 // Масти монохромные и различаются формой. Красный не вводить: акцентный цвет
 // зарезервирован под необратимые действия.
 // \uFE0E — селектор текстового начертания: без него ♦ и ♥ на части платформ
@@ -730,15 +751,18 @@ function open(payload) {
 const cards = new Map();
 
 // Сроки как в README: пять минут, час, сутки, двое суток, пять суток. По умолчанию 48 ч.
+// Ключи выписаны целиком, а не собраны из числа: собранный ключ не проверить статически,
+// и пропажа строки в словаре всплыла бы только на экране.
 const TTL_CHOICES = [
-  { seconds: 300, label: '5 мин' },
-  { seconds: 3600, label: '1 ч' },
-  { seconds: 86400, label: '24 ч' },
-  { seconds: 172800, label: '48 ч' },
-  { seconds: 432000, label: '5 сут' },
+  { seconds: 300, label: t('ttl.300') },
+  { seconds: 3600, label: t('ttl.3600') },
+  { seconds: 86400, label: t('ttl.86400') },
+  { seconds: 172800, label: t('ttl.172800') },
+  { seconds: 432000, label: t('ttl.432000') },
 ];
 let ttlChoice = 3;
 
+$('ttlPick').textContent = TTL_CHOICES[ttlChoice].label;
 $('ttlPick').addEventListener('click', () => {
   ttlChoice = (ttlChoice + 1) % TTL_CHOICES.length;
   $('ttlPick').textContent = TTL_CHOICES[ttlChoice].label;
@@ -777,7 +801,7 @@ function fill(bubble, ciphertext) {
 
   if (!roomKey) {
     bubble.classList.add('bad');
-    bubble.textContent = 'ключа комнаты нет — расшифровать нечем';
+    bubble.textContent = t('msg.nokey');
     return;
   }
 
@@ -786,13 +810,13 @@ function fill(bubble, ciphertext) {
     envelope = JSON.parse(open(ciphertext));
   } catch {
     bubble.classList.add('bad');
-    bubble.textContent = 'не расшифровывается: ключ от другой эпохи или другой комнаты';
+    bubble.textContent = t('msg.undecryptable');
     return;
   }
 
   if (envelope.v !== ENVELOPE_VERSION) {
     bubble.classList.add('bad');
-    bubble.textContent = `сообщение формата ${envelope.v}, эта сборка знает только ${ENVELOPE_VERSION}`;
+    bubble.textContent = t('msg.version', { got: envelope.v, known: ENVELOPE_VERSION });
     return;
   }
 
@@ -804,9 +828,9 @@ function fill(bubble, ciphertext) {
 }
 
 function humanSize(bytes) {
-  if (bytes < 1024) return `${bytes} Б`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
+  if (bytes < 1024) return t('size.b', { n: bytes });
+  if (bytes < 1024 * 1024) return t('size.kb', { n: Math.round(bytes / 1024) });
+  return t('size.mb', { n: (bytes / 1024 / 1024).toFixed(1) });
 }
 
 function drawFile(bubble, envelope) {
@@ -823,12 +847,11 @@ function drawFile(bubble, envelope) {
 
   const warn = document.createElement('div');
   warn.className = 'warn';
-  warn.textContent = 'файл никто не проверял: сервер видит только шифротекст, и антивирус '
-    + 'при сквозном шифровании невозможен в принципе';
+  warn.textContent = t('file.warn');
 
   const get = document.createElement('button');
   get.className = 'get';
-  get.textContent = 'Скачать';
+  get.textContent = t('file.get');
   get.addEventListener('click', () => download(envelope, get, meta));
 
   box.append(name, meta, warn, get);
@@ -838,11 +861,11 @@ function drawFile(bubble, envelope) {
 /** Скачивание: шифротекст с сервера, расшифровка в памяти, blob-URL. */
 async function download(envelope, button, meta) {
   button.disabled = true;
-  meta.textContent = `${humanSize(envelope.size)} · качаю…`;
+  meta.textContent = `${humanSize(envelope.size)} · ${t('file.downloading')}`;
   try {
     const response = await fetch(`/api/file/${encodeURIComponent(envelope.id)}`);
     if (!response.ok) {
-      throw new Error(response.status === 404 ? 'файла больше нет: истёк срок' : 'сервер не отдал файл');
+      throw new Error(response.status === 404 ? 'file.gone' : 'file.notserved');
     }
     const ciphertext = new Uint8Array(await response.arrayBuffer());
     const plain = decryptFile(ciphertext, sodium.from_base64(envelope.key, B64));
@@ -857,7 +880,7 @@ async function download(envelope, button, meta) {
 
     meta.textContent = humanSize(envelope.size);
   } catch (e) {
-    meta.textContent = `${humanSize(envelope.size)} · ${e.message}`;
+    meta.textContent = `${humanSize(envelope.size)} · ${translateError(e)}`;
   } finally {
     button.disabled = false;
   }
@@ -1025,10 +1048,10 @@ function drawModeration(frame) {
 
     const kick = document.createElement('button');
     kick.className = 'act danger';
-    kick.textContent = 'Исключить';
+    kick.textContent = t('moder.kick');
     kick.addEventListener('click', () => {
       // Подтверждение обязательно: действие необратимо, карта не вернётся в колоду.
-      if (!confirm(`Исключить ${cardName(seat.card)}? Вернуть участника прежней картой уже нельзя.`)) {
+      if (!confirm(t('moder.confirm', { card: cardName(seat.card) }))) {
         return;
       }
       ask({ op: 'remove', room: roomId, device: seat.device });
@@ -1041,7 +1064,7 @@ function drawModeration(frame) {
 
 $('doWipe').addEventListener('click', () => {
   if (!roomId) return;
-  if (!confirm('Стереть все сообщения, записки и вложения этой комнаты? Отменить нельзя.')) {
+  if (!confirm(t('wipe.confirm'))) {
     return;
   }
   ask({ op: 'wipe', room: roomId });
@@ -1058,7 +1081,7 @@ function onWiped() {
   paintUnread();
   lastSeenId = 0;
   lastSeenDirect = 0;
-  $('status').textContent = 'переписка стёрта';
+  $('status').textContent = t('wipe.done');
   renderView();
 }
 
@@ -1095,7 +1118,7 @@ function solveWork(stamp) {
 /** Перебор синхронный и на доли секунды подвешивает вкладку — поэтому про него говорят вслух. */
 async function withProof(frame) {
   const was = $('status').textContent;
-  $('status').textContent = 'считаю пропуск…';
+  $('status').textContent = t('work.computing');
   try {
     const stamp = await askWork();
     if (stamp.bits > 0) {
@@ -1105,7 +1128,7 @@ async function withProof(frame) {
     ask(frame);
     $('status').textContent = was;
   } catch (e) {
-    $('status').textContent = e.message;
+    $('status').textContent = translateError(e);
   }
 }
 
@@ -1167,7 +1190,7 @@ function sendDirect(body) {
   const peerCard = cards.get(peer);
   const peerKey = dmPublic.get(peer);
   if (peerCard === undefined || !peerKey) {
-    $('status').textContent = 'у этого участника ещё нет ключа переписки — он не открывал вкладку';
+    $('status').textContent = t('dm.nokey');
     return;
   }
 
@@ -1240,7 +1263,7 @@ function drawThreadList() {
 
   const others = [...cards.keys()].filter((device) => device !== me());
   if (others.length === 0) {
-    pane.append(note('В комнате пока никого, кроме вас.'));
+    pane.append(note(t('dm.alone')));
     return;
   }
 
@@ -1265,14 +1288,14 @@ function drawThreadList() {
     const line = threads.get(device);
     if (line && line.length) {
       const tail = line[line.length - 1];
-      last.textContent = (tail.mine ? 'вы: ' : '') + tail.body;
+      last.textContent = (tail.mine ? t('dm.you') : '') + tail.body;
     } else if (!dmPublic.get(device)) {
       // Переписку показываем всегда, даже когда ответить пока нечем: скрыть уже
       // полученное было бы хуже, чем объяснить, почему не отправляется.
-      last.textContent = 'ещё не открывал вкладку — написать нельзя';
+      last.textContent = t('dm.never');
       row.disabled = true;
     } else {
-      last.textContent = 'написать';
+      last.textContent = t('dm.write');
     }
 
     row.append(card, last);
@@ -1291,8 +1314,7 @@ function drawThread() {
 
   const line = threads.get(peer) || [];
   if (line.length === 0) {
-    pane.append(note('Здесь пока пусто. Всё, что вы напишете, увидит только этот участник — '
-      + 'сервер не узнает даже, кому адресовано.'));
+    pane.append(note(t('dm.empty')));
   }
 
   for (const entry of line) {
@@ -1301,7 +1323,7 @@ function drawThread() {
 
     const who = document.createElement('div');
     who.className = 'who';
-    who.textContent = entry.mine ? 'вы' : cardName(cards.get(peer));
+    who.textContent = entry.mine ? t('dm.me') : cardName(cards.get(peer));
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
@@ -1328,7 +1350,7 @@ function renderView() {
   $('tabRoom').setAttribute('aria-selected', String(view === 'room'));
   $('tabDm').setAttribute('aria-selected', String(view !== 'room'));
   $('composer').classList.toggle('hidden', view === 'dm');
-  $('text').placeholder = view === 'thread' ? 'Написать лично' : 'Сообщение';
+  $('text').placeholder = t(view === 'thread' ? 'composer.placeholder.dm' : 'composer.placeholder');
   // Файлов в личных сообщениях нет: блоб один, и сервер видит, кто его качает. Текст
   // получателя скрывает, а вложение выдаёт — поддерживать это «с оговоркой» нельзя.
   $('attach').disabled = view !== 'room' || !roomKey;
@@ -1337,7 +1359,7 @@ function renderView() {
     // Открыли нить — значит прочитали.
     unread.delete(peer);
     paintUnread();
-    $('threadWho').textContent = 'Личное · ' + cardName(cards.get(peer));
+    $('threadWho').textContent = t('dm.thread', { card: cardName(cards.get(peer)) });
     drawThread();
   } else if (view === 'dm') {
     drawThreadList();
@@ -1419,7 +1441,7 @@ function onRoom(frame) {
     }
   }
 
-  $('roomTitle').textContent = 'Вылазка';
+  $('roomTitle').textContent = t('app.title');
   // Показываем выпуск только владельцу и администраторам: показать всем — обещать
   // действие, которое сервер отклонит.
   const mayInvite = frame.role === 'owner' || frame.role === 'admin';
@@ -1431,7 +1453,7 @@ function onRoom(frame) {
   drawModeration(frame);
   $('seats').textContent = `${cardName(frame.card)} · ${frame.seatsTaken}/52`;
   if (frame.deckSpent) {
-    $('status').textContent = 'колода кончилась — комната больше никого не принимает';
+    $('status').textContent = t('deck.spent');
   }
 
   // Вход в ленту — отдельным кадром и ровно один раз за соединение: до него сервер
@@ -1457,7 +1479,7 @@ function onRoom(frame) {
 
 function onKey(frame) {
   if (!frame.wrapped) {
-    $('status').textContent = 'ключ комнаты ещё не выдан — попросите участника открыть вкладку';
+    $('status').textContent = t('key.pending');
     return;
   }
   roomKey = sodium.crypto_box_seal_open(
@@ -1478,7 +1500,7 @@ function onKey(frame) {
 async function signedSocketUrl() {
   const response = await fetch('/api/challenge');
   if (!response.ok) {
-    throw new Error(response.status === 429 ? 'слишком много попыток входа' : 'сервер не выдал вызов');
+    throw new Error(response.status === 429 ? 'auth.throttled' : 'auth.nochallenge');
   }
   const challenge = await response.json();
   const nonce = sodium.from_base64(challenge.nonce, B64);
@@ -1487,7 +1509,7 @@ async function signedSocketUrl() {
   // она отличает наш сервер от подставленного посередине.
   const serverKey = sodium.from_base64(challenge.serverPublicKey, B64);
   if (!sodium.crypto_sign_verify_detached(sodium.from_base64(challenge.serverSignature, B64), nonce, serverKey)) {
-    throw new Error('сервер не подтвердил вызов своей подписью');
+    throw new Error('auth.unsigned');
   }
   await rememberServerKey(challenge.serverPublicKey);
 
@@ -1510,7 +1532,7 @@ async function rememberServerKey(current) {
   } else if (known !== current) {
     // Не блокируем вход: у самохостера это чаще переустановка, чем подмена. Но и молчать
     // нельзя — отличить одно от другого может только человек.
-    $('status').textContent = 'ключ сервера сменился с прошлого входа — проверьте, что это ваш сервер';
+    $('status').textContent = t('auth.serverchanged');
   }
 }
 
@@ -1519,7 +1541,7 @@ async function connect() {
   try {
     url = await signedSocketUrl();
   } catch (e) {
-    $('status').textContent = `${e.message}, повтор через 5 с`;
+    $('status').textContent = t('status.retry', { error: translateError(e) });
     setTimeout(connect, 5000);
     return;
   }
@@ -1527,7 +1549,7 @@ async function connect() {
   socket = new WebSocket(url);
 
   socket.onopen = () => {
-    $('status').textContent = 'в комнату — только по приглашению; сервер пока принимает любое устройство';
+    $('status').textContent = t('status.open');
     $('text').disabled = false;
     $('send').disabled = false;
     $('attach').disabled = false;
@@ -1565,25 +1587,28 @@ async function connect() {
       uploadWaiting = null;
     }
     else if (frame.op === 'error') {
-      if (frame.reason === 'нужно приглашение') createRefused = true;
+      // Сравнение по коду, а не по тексту отказа: текст переводится и переписывается,
+      // и ветка, завязанная на формулировку, однажды молча перестанет срабатывать.
+      if (frame.code === 'invite-required') createRefused = true;
+      const said = 'e.' + frame.code;
       // Отказ мог прийти на запрос пропуска — тогда ждать его дальше бессмысленно.
-      uploadWaiting?.reject(new Error(frame.reason));
+      uploadWaiting?.reject(new Error(said));
       uploadWaiting = null;
-      workWaiting?.reject(new Error(frame.reason));
+      workWaiting?.reject(new Error(said));
       workWaiting = null;
-      $('status').textContent = frame.reason;
+      $('status').textContent = t(said);
     }
   };
 
   socket.onclose = () => {
-    $('status').textContent = 'связь потеряна, переподключаюсь…';
+    $('status').textContent = t('link.lost');
     $('text').disabled = true;
     $('send').disabled = true;
     $('attach').disabled = true;
     // Пропуск на загрузку с прошлого соединения уже не придёт.
-    uploadWaiting?.reject(new Error('связь потеряна'));
+    uploadWaiting?.reject(new Error('link.down'));
     uploadWaiting = null;
-    workWaiting?.reject(new Error('связь потеряна'));
+    workWaiting?.reject(new Error('link.down'));
     workWaiting = null;
     setTimeout(connect, 1000);
   };
@@ -1624,19 +1649,19 @@ $('file').addEventListener('change', async () => {
   if (!file || !roomKey) return;
 
   if (file.size > MAX_PLAINTEXT) {
-    $('status').textContent = `${file.name} больше 20 МБ — сервер такой не примет`;
+    $('status').textContent = t('file.toobig', { name: file.name });
     return;
   }
 
   $('attach').disabled = true;
   try {
-    $('status').textContent = `${file.name}: шифрую…`;
+    $('status').textContent = t('file.encrypting', { name: file.name });
     const plain = new Uint8Array(await file.arrayBuffer());
     // Ключ случайный на каждый файл. В сообщение он попадёт вместе с именем и типом —
     // всё это уже под ключом комнаты, и на сервере остаётся только размер и время.
     const { key, ciphertext } = encryptFile(plain);
 
-    $('status').textContent = `${file.name}: отправляю…`;
+    $('status').textContent = t('file.sending', { name: file.name });
     const permit = await askUploadToken(ciphertext.length);
 
     // Пропуск заголовком, а не параметром запроса: параметры попадают в access.log.
@@ -1646,14 +1671,14 @@ $('file').addEventListener('change', async () => {
       body: ciphertext,
     });
     if (!response.ok) {
-      throw new Error(response.status === 413 ? 'файл больше, чем принимает сервер' : 'сервер не принял файл');
+      throw new Error(response.status === 413 ? 'file.refused.big' : 'file.refused');
     }
 
     ask({ op: 'send', room: roomId, ttl: TTL_CHOICES[ttlChoice].seconds,
           ciphertext: seal(fileEnvelope(permit.id, key, file, plain.length)) });
     $('status').textContent = '';
   } catch (e) {
-    $('status').textContent = `${file.name}: ${e.message}`;
+    $('status').textContent = `${file.name}: ${translateError(e)}`;
   } finally {
     uploadWaiting = null;
     $('attach').disabled = false;

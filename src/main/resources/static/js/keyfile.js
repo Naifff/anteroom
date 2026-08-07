@@ -42,13 +42,13 @@ export async function decryptSeed(file, passphrase) {
     const bytes = new Uint8Array(file);
     const headerLength = MAGIC.length + 9;
     if (bytes.length < headerLength + SALT_BYTES + sodium.crypto_secretbox_NONCEBYTES) {
-        throw new Error('это не файл ключа: слишком короткий');
+        throw new Error('x.keyfile-short');
     }
     if (sodium.to_string(bytes.slice(0, MAGIC.length)) !== MAGIC) {
-        throw new Error('это не файл ключа');
+        throw new Error('x.keyfile-alien');
     }
     if (bytes[MAGIC.length] !== VERSION) {
-        throw new Error(`файл ключа версии ${bytes[MAGIC.length]}, эта сборка знает только ${VERSION}`);
+        throw new Error('x.keyfile-version');
     }
 
     const view = new DataView(bytes.buffer, bytes.byteOffset);
@@ -66,7 +66,7 @@ export async function decryptSeed(file, passphrase) {
     } catch {
         // Неверная фраза и порченый файл неотличимы снаружи, и это правильно:
         // различать их означало бы подсказывать перебирающему, что фраза угадана.
-        throw new Error('не открывается: другая фраза или повреждённый файл');
+        throw new Error('x.keyfile-locked');
     }
 }
 

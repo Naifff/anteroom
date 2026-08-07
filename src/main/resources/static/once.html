@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -7,7 +7,7 @@
 <meta name="referrer" content="no-referrer">
 <!-- Превью-ботам показывать нечего: содержимое здесь появляется только после нажатия. -->
 <meta name="robots" content="noindex, nofollow, noarchive">
-<title>Одноразовая записка</title>
+<title>One-time note</title>
 <style>
 :root{
   --bg:#191817; --surface:#211F1E; --surface-hi:#2B2827;
@@ -32,13 +32,11 @@ p{margin:10px 0 0;font-size:13.5px;color:var(--ink-3);line-height:1.5}
 </head>
 <body>
 <div class="wrap">
-  <h1>Одноразовая записка</h1>
-  <p id="lead">Содержимое откроется один раз и в тот же момент исчезнет с сервера. Второй
-    попытки не будет — ни у вас, ни у того, кому вы перешлёте эту ссылку.</p>
-  <p>Первым может оказаться не адресат: одноразовость означает «ровно один раз», а не
-    «ровно тому, кому предназначалось».</p>
+  <h1 data-i18n="once.title" data-i18n-title="once.title"></h1>
+  <p id="lead" data-i18n="once.lead"></p>
+  <p data-i18n="once.warn"></p>
 
-  <button class="act" id="open">Открыть и уничтожить</button>
+  <button class="act" id="open" data-i18n="once.open"></button>
 
   <div class="note hidden" id="note"></div>
   <p class="bad hidden" id="error"></p>
@@ -54,9 +52,14 @@ p{margin:10px 0 0;font-size:13.5px;color:var(--ink-3);line-height:1.5}
  * Запрос уходит только по нажатию. Превью-боты и антивирусы ходят по ссылке GET'ом
  * раньше человека — по GET здесь не тратится ничего.
  */
+import { t, translateError, applyStatic } from '/js/i18n.js';
+
 await sodium.ready;
 
 const $ = (id) => document.getElementById(id);
+// Переключателя языка здесь нет: страницу открывает посторонний, ради одной записки
+// выбирать язык незачем. Берётся выбранный в мессенджере, иначе английский.
+applyStatic();
 const B64 = sodium.base64_variants.URLSAFE_NO_PADDING;
 const NONCE = sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
 
@@ -68,12 +71,12 @@ const key = dot < 0 ? null : sodium.from_base64(raw.slice(dot + 1), B64);
 if (!token || !key) {
   $('open').disabled = true;
   $('error').classList.remove('hidden');
-  $('error').textContent = 'ссылка неполная: в ней нет ключа от записки';
+  $('error').textContent = t('once.incomplete');
 }
 
 $('open').addEventListener('click', async () => {
   $('open').disabled = true;
-  $('open').textContent = 'открываю…';
+  $('open').textContent = t('once.opening');
   try {
     // Токен телом, а не в адресе: адрес попадает в журнал веб-сервера и переживёт записку.
     const response = await fetch('/api/once', {
@@ -84,7 +87,7 @@ $('open').addEventListener('click', async () => {
     if (!response.ok) {
       // Один и тот же текст на «уже открыли», «истёк срок» и «такой не было»: сервер их
       // не различает, и показывать разницу здесь было бы выдумкой.
-      throw new Error('записки нет: её уже открыли, срок истёк или ссылка неверна');
+      throw new Error('once.gone');
     }
 
     const packed = new Uint8Array(await response.arrayBuffer());
@@ -95,15 +98,14 @@ $('open').addEventListener('click', async () => {
     // а ключ в истории браузера и на чужом экране ни к чему.
     history.replaceState(null, '', location.pathname);
 
-    $('lead').textContent = 'Записка уничтожена на сервере. Это единственная её копия — '
-      + 'закроете вкладку, и она пропадёт.';
+    $('lead').textContent = t('once.done');
     $('open').classList.add('hidden');
     $('note').classList.remove('hidden');
     $('note').textContent = JSON.parse(plain).body;
   } catch (e) {
     $('open').classList.add('hidden');
     $('error').classList.remove('hidden');
-    $('error').textContent = e.message;
+    $('error').textContent = translateError(e);
   }
 });
 </script>

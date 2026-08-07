@@ -48,7 +48,7 @@ export function decryptFile(ciphertext, key) {
     const step = CHUNK + sodium.crypto_secretstream_xchacha20poly1305_ABYTES;
 
     if (ciphertext.length < headerBytes) {
-        throw new Error('файл повреждён: нет заголовка');
+        throw new Error('x.attach-noheader');
     }
     const pull = sodium.crypto_secretstream_xchacha20poly1305_init_pull(
         ciphertext.slice(0, headerBytes), key);
@@ -59,7 +59,7 @@ export function decryptFile(ciphertext, key) {
         const result = sodium.crypto_secretstream_xchacha20poly1305_pull(
             pull, ciphertext.slice(at, at + step));
         if (!result) {
-            throw new Error('файл повреждён или ключ не от него');
+            throw new Error('x.attach-corrupt');
         }
         parts.push(result.message);
         if (result.tag === sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL) {
@@ -70,7 +70,7 @@ export function decryptFile(ciphertext, key) {
 
     // Обрыв на середине без метки конца — это не «почти целый файл», а другой файл.
     if (!closed) {
-        throw new Error('файл обрезан: конец потока не найден');
+        throw new Error('x.attach-truncated');
     }
     return concat(parts);
 }
