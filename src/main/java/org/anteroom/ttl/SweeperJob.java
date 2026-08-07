@@ -2,7 +2,10 @@ package org.anteroom.ttl;
 
 import java.time.Clock;
 
+import org.anteroom.file.FileService;
+import org.anteroom.message.DirectService;
 import org.anteroom.message.MessageService;
+import org.anteroom.message.OneTimeService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -30,11 +33,18 @@ public class SweeperJob {
     private static final int VACUUM_PAGES = 256;
 
     private final MessageService messages;
+    private final FileService files;
+    private final OneTimeService onetime;
+    private final DirectService direct;
     private final JdbcTemplate jdbc;
     private final Clock clock;
 
-    public SweeperJob(MessageService messages, JdbcTemplate jdbc, Clock clock) {
+    public SweeperJob(MessageService messages, FileService files, OneTimeService onetime,
+                      DirectService direct, JdbcTemplate jdbc, Clock clock) {
         this.messages = messages;
+        this.files = files;
+        this.onetime = onetime;
+        this.direct = direct;
         this.jdbc = jdbc;
         this.clock = clock;
     }
@@ -45,7 +55,11 @@ public class SweeperJob {
         long now = clock.millis();
 
         int deleted = messages.sweepExpired();
-        deleted += jdbc.update("DELETE FROM onetime WHERE expires_at <= ?", now);
+        // Вложения убирает FileService: у них есть вторая половина на диске, и порядок
+        // «сначала блоб, потом строка» держится там.
+        deleted += files.sweepExpired();
+        deleted += onetime.sweepExpired();
+        deleted += direct.sweepExpired();
         // Исчерпанные инвайты уходят вместе с протухшими: пока строка жива, она держит
         // wrapped_key, и сохранённая кем-то ссылка остаётся заряженной.
         deleted += jdbc.update("DELETE FROM invite WHERE expires_at <= ? OR uses_left <= 0", now);
@@ -57,5 +71,20 @@ public class SweeperJob {
         // Полный VACUUM не использовать: он блокирует базу целиком и требует вдвое больше
         // места на диске. incremental_vacuum отдаёт свободные страницы порциями.
         jdbc.execute("PRAGMA incremental_vacuum(" + VACUUM_PAGES + ")");
+    }
+
+    /**
+     * Скан осиротевших блобов — только при старте, не каждые полминуты.
+     *
+     * <p>Сирота появляется от падения между записью тела и вставкой строки, а ещё от
+     * удаления комнаты: каскад в схеме сносит строки, но про файловую систему не знает.
+     * Оба случая редкие, а обход каталога стоит тем дороже, чем больше в нём файлов.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void sweepOrphanBlobs() {
+        int removed = files.removeOrphans();
+        if (removed > 0) {
+            log.info("Удалено осиротевших блобов: {}", removed);
+        }
     }
 }

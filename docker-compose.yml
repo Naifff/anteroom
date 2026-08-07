@@ -1,0 +1,33 @@
+# Опция для тех, у кого уже есть окружение с контейнерами. Основной путь — systemd,
+# см. README: контейнер прячет каталог данных за томом, а копировать нужно именно его.
+services:
+  messenger:
+    build: .
+    restart: unless-stopped
+    volumes:
+      # Именованный том, а не bind-mount: права на каталог выставляет docker, и
+      # server.key не окажется читаемым для всех — при открытых правах сервер
+      # откажется стартовать.
+      - messenger-data:/var/lib/messenger
+    # Наружу порт не публикуется: TLS завершает Caddy, и приложение слушает только
+    # внутреннюю сеть compose.
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - messenger
+
+volumes:
+  messenger-data:
+  caddy-data:
+  caddy-config:

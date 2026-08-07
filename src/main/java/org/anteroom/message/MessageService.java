@@ -95,4 +95,8 @@ public class MessageService {
     public int sweepExpired() {
         return jdbc.update("DELETE FROM message WHERE expires_at <= ?", clock.millis());
     }
+
+    public int wipeRoom(String roomId) {
+        return jdbc.update("DELETE FROM message WHERE room_id = ?", roomId);
+    }
 }

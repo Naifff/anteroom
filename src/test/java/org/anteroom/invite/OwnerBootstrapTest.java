@@ -117,7 +117,7 @@ class OwnerBootstrapTest {
         // Участие хотя бы в одной комнате — тоже пропуск: комнату может завести любой
         // участник, а не только владелец сервера.
         devices.rememberSigningKey("host");
-        String roomId = rooms.create("host", 3600, 86400);
+        String roomId = rooms.create("host", 3600, 86400, true);
         devices.rememberSigningKey("guest");
         invites.create(roomId, "host", InviteHash.of("гостевой"), "member", 3600, 1, new byte[] { 1 });
 

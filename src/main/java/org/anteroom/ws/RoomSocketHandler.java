@@ -1,13 +1,22 @@
 package org.anteroom.ws;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 
+import org.anteroom.auth.ProofOfWork;
+import org.anteroom.auth.RateLimiter;
 import org.anteroom.device.DeviceService;
+import org.anteroom.file.FileService;
+import org.anteroom.file.FileTooLargeException;
+import org.anteroom.file.Upload;
 import org.anteroom.invite.InviteService;
 import org.anteroom.invite.Redemption;
+import org.anteroom.message.DirectService;
 import org.anteroom.message.MessageService;
+import org.anteroom.message.OneTimeService;
+import org.anteroom.message.StoredDirect;
 import org.anteroom.message.StoredMessage;
 import org.anteroom.room.DeckSpentException;
 import org.anteroom.room.KeyEpochService;
@@ -16,6 +25,7 @@ import org.anteroom.room.Room;
 import org.anteroom.room.RoomService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -51,16 +61,41 @@ public class RoomSocketHandler extends TextWebSocketHandler {
     private final KeyEpochService epochs;
     private final DeviceService devices;
     private final InviteService invites;
+    private final FileService files;
+    private final OneTimeService onetime;
+    private final DirectService direct;
+    private final RateLimiter limits;
+    private final ProofOfWork work;
     private final ObjectMapper json = new ObjectMapper();
 
+    /**
+     * Потолки попыток. Заводить комнаты и выпускать приглашения — редкие осознанные
+     * действия, писать — частое, поэтому окна разные.
+     */
+    @Value("${app.limit.create-per-hour:5}")
+    private int createPerHour;
+    @Value("${app.limit.create-per-hour-ip:20}")
+    private int createPerHourPerAddress;
+    @Value("${app.limit.invite-per-hour:20}")
+    private int invitePerHour;
+    @Value("${app.limit.write-per-minute:60}")
+    private int writePerMinute;
+
     public RoomSocketHandler(SessionRegistry registry, MessageService messages, RoomService rooms,
-                             KeyEpochService epochs, DeviceService devices, InviteService invites) {
+                             KeyEpochService epochs, DeviceService devices, InviteService invites,
+                             FileService files, OneTimeService onetime, DirectService direct,
+                             RateLimiter limits, ProofOfWork work) {
         this.registry = registry;
         this.messages = messages;
         this.rooms = rooms;
         this.epochs = epochs;
         this.devices = devices;
         this.invites = invites;
+        this.files = files;
+        this.onetime = onetime;
+        this.direct = direct;
+        this.limits = limits;
+        this.work = work;
     }
 
     @Override
@@ -86,9 +121,18 @@ public class RoomSocketHandler extends TextWebSocketHandler {
                 case "enter" -> enter(session, device, frame);
                 case "key" -> key(session, device, frame);
                 case "wrap" -> wrap(session, device, frame);
+                case "upload" -> upload(session, device, frame);
+                case "once" -> once(session, device, frame);
+                case "work" -> work(session);
+                case "remove" -> remove(session, device, frame);
+                case "wipe" -> wipe(session, device, frame);
+                case "dm-key" -> dmKey(session, device, frame);
+                case "dm" -> dm(session, device, frame);
                 case "send" -> send(session, device, frame);
                 default -> fail(session, "неизвестная операция");
             }
+        } catch (FileTooLargeException e) {
+            fail(session, e.getMessage());
         } catch (DeckSpentException e) {
             // Не ошибка выдачи, а конец жизни комнаты — и называется отдельно, чтобы
             // интерфейс мог сказать это словами, а не показать общий отказ.
@@ -105,10 +149,18 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         if (!devices.admitted(device)) {
             throw new IllegalArgumentException("нужно приглашение");
         }
+        // Потолок и на устройство, и на адрес: одно устройство не должно заводить комнаты
+        // в цикле, а один адрес — плодить устройства и обходить первый счётчик.
+        limit("create:" + device, createPerHour, Duration.ofHours(1));
+        limit("create-ip:" + address(session), createPerHourPerAddress, Duration.ofHours(1));
+        requireWork(frame);
 
         String roomId = rooms.create(device,
                 frame.path("defaultTtl").asLong(RoomService.TTL_DEFAULT),
-                frame.path("maxTtl").asLong(RoomService.TTL_CEILING));
+                frame.path("maxTtl").asLong(RoomService.TTL_CEILING),
+                // Молчание клиента — личные разрешены: запрет это осознанный выбор,
+                // а не то, что случается по недосмотру.
+                frame.path("directAllowed").asBoolean(true));
         sendRoom(session, device, roomId);
     }
 
@@ -122,6 +174,8 @@ public class RoomSocketHandler extends TextWebSocketHandler {
     private void invite(WebSocketSession session, String device, JsonNode frame) throws IOException {
         String roomId = frame.path("room").asText();
         requireIssuer(roomId, device);
+        limit("invite:" + device, invitePerHour, Duration.ofHours(1));
+        requireWork(frame);
 
         invites.create(roomId, device, frame.path("tokenHash").asText(), frame.path("role").asText("member"),
                 frame.path("ttl").asLong(86400), frame.path("uses").asInt(1),
@@ -148,7 +202,11 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         answer.put("wrapped", Base64.getEncoder().encodeToString(result.wrappedKey()));
         write(session, answer);
 
-        announceRoster(result.roomId(), session);
+        // У owner-инвайта комнаты нет: рассылать состав некому, и лезть с ним в реестр
+        // нельзя — там ключом карты выступает номер комнаты.
+        if (result.roomId() != null) {
+            announceRoster(result.roomId(), session);
+        }
     }
 
     private void revoke(WebSocketSession session, String device, JsonNode frame) {
@@ -189,6 +247,11 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         for (StoredMessage stored : messages.since(roomId, frame.path("since").asLong())) {
             send(session, roomId, stored);
         }
+        // Личные догружаются отдельным счётчиком: их id живут в своей таблице и с общей
+        // лентой не пересекаются.
+        for (StoredDirect stored : direct.since(roomId, frame.path("sinceDirect").asLong())) {
+            sendDirect(session, roomId, stored);
+        }
     }
 
     private void key(WebSocketSession session, String device, JsonNode frame) throws IOException {
@@ -216,9 +279,192 @@ public class RoomSocketHandler extends TextWebSocketHandler {
                 Base64.getDecoder().decode(frame.path("wrapped").asText()));
     }
 
+    /**
+     * Пропуск на загрузку вложения.
+     *
+     * <p>Членство проверяется здесь, а не в HTTP-эндпоинте: у того входа нет ни сессии,
+     * ни подписи — только этот токен, короткоживущий и одноразовый.
+     */
+    private void upload(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        String roomId = frame.path("room").asText();
+        requireMember(roomId, device);
+
+        limitWrites(device);
+
+        Long requested = frame.hasNonNull("ttl") ? frame.get("ttl").asLong() : null;
+        Upload permit = files.issue(rooms.find(roomId), device, frame.path("size").asLong(), requested);
+
+        ObjectNode answer = json.createObjectNode();
+        answer.put("op", "upload-ready");
+        answer.put("room", roomId);
+        answer.put("id", permit.id());
+        answer.put("token", permit.token());
+        answer.put("expiresAt", permit.expiresAt());
+        write(session, answer);
+    }
+
+    /**
+     * Одноразовая записка.
+     *
+     * <p>Как и у приглашения, сюда приезжает только SHA-256 токена: сам токен вместе
+     * с ключом от записки живёт во фрагменте ссылки и на сервер не попадает.
+     */
+    private void once(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        String roomId = frame.path("room").asText();
+        requireMember(roomId, device);
+
+        limitWrites(device);
+
+        Long requested = frame.hasNonNull("ttl") ? frame.get("ttl").asLong() : null;
+        onetime.create(rooms.find(roomId), frame.path("tokenHash").asText(),
+                Base64.getDecoder().decode(frame.path("ciphertext").asText()), requested);
+
+        ObjectNode answer = json.createObjectNode();
+        answer.put("op", "once-stored");
+        answer.put("room", roomId);
+        write(session, answer);
+    }
+
+    /**
+     * Исключение участника.
+     *
+     * <p>Порядок обязателен: сначала пометка в базе, потом ротация эпохи, потом разрыв
+     * сессий. Закрыть сокет первым значит дать секунду на переподключение, пока членство
+     * ещё числится за человеком.
+     *
+     * <p>Ротация не косметика. Без неё исключение — запись в базе, а ключ комнаты у
+     * человека остался: старую историю он расшифрует в любом случае, новую не должен.
+     * Обёртки новой эпохи ему уже не выпишут — его нет в {@code membersWithoutWrapper}.
+     *
+     * <p>Карта остаётся занятой навсегда. Вернуть её в колоду значит через неделю отдать
+     * «восьмёрку бубён» другому человеку, а старые реплики прежнего останутся висеть выше.
+     */
+    private void remove(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        String roomId = frame.path("room").asText();
+        requireIssuer(roomId, device);
+
+        String outcast = frame.path("device").asText();
+        if (outcast.equals(device)) {
+            throw new IllegalArgumentException("себя исключить нельзя");
+        }
+        if (rooms.role(roomId, outcast) == null) {
+            throw new IllegalArgumentException("нет доступа к комнате");
+        }
+
+        rooms.remove(roomId, outcast);
+        epochs.rotate(roomId);
+        disconnect(roomId, outcast);
+
+        sendRoom(session, device, roomId);
+        announceRoster(roomId, session);
+    }
+
+    /** Рвёт живые сессии исключённого: иначе рассылка идёт ему до его же реконнекта. */
+    private void disconnect(String roomId, String outcast) {
+        for (WebSocketSession listener : registry.sessions(roomId)) {
+            if (!outcast.equals(device(listener))) {
+                continue;
+            }
+            registry.unregister(roomId, listener);
+            try {
+                listener.close(CloseStatus.NORMAL);
+            } catch (IOException e) {
+                log.debug("Сессия исключённого не закрылась: {}", e.toString());
+            }
+        }
+    }
+
+    /**
+     * Ручная зачистка комнаты владельцем.
+     *
+     * <p>Стирается содержимое, а не комната: участники, карты и обёртки остаются, разговор
+     * продолжается с чистого листа. Вложения уходят первыми — у них есть вторая половина
+     * на диске, и порядок «сначала блоб, потом строка» держится там.
+     */
+    private void wipe(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        String roomId = frame.path("room").asText();
+        if (!"owner".equals(rooms.role(roomId, device))) {
+            throw new IllegalArgumentException("нет доступа к комнате");
+        }
+
+        files.wipeRoom(roomId);
+        messages.wipeRoom(roomId);
+        direct.wipeRoom(roomId);
+        onetime.wipeRoom(roomId);
+
+        ObjectNode answer = json.createObjectNode();
+        answer.put("op", "wiped");
+        answer.put("room", roomId);
+        for (WebSocketSession listener : registry.sessions(roomId)) {
+            try {
+                write(listener, answer);
+            } catch (IOException e) {
+                log.debug("Кадр зачистки не ушёл, сессия снимается: {}", e.toString());
+                registry.unregister(roomId, listener);
+            }
+        }
+        write(session, answer);
+    }
+
+    /** Ключ личной переписки на эпоху. Публикует его владелец ключа и только он. */
+    private void dmKey(WebSocketSession session, String device, JsonNode frame) {
+        String roomId = frame.path("room").asText();
+        requireMember(roomId, device);
+
+        epochs.storeDmKey(roomId, device, frame.path("epoch").asInt(), frame.path("key").asText());
+
+        // Состав уходит заново: без этого остальные узнают о новом ключе переписки только
+        // при следующем входе, а до тех пор написать этому человеку нечем.
+        announceRoster(roomId, session);
+    }
+
+    /**
+     * Личное сообщение.
+     *
+     * <p>Уходит всей комнате, а не получателю: кому адресовано, сервер не знает. Он видит
+     * 52 слота одинаковой длины и проверяет только форму — что их ровно 52 и что все одной
+     * длины. Заглянуть внутрь он не может, и в этом весь смысл.
+     */
+    private void dm(WebSocketSession session, String device, JsonNode frame) throws IOException {
+        String roomId = frame.path("room").asText();
+        requireMember(roomId, device);
+
+        limitWrites(device);
+
+        byte[] ciphertext = Base64.getDecoder().decode(frame.path("ciphertext").asText());
+        byte[] envelopes = Base64.getDecoder().decode(frame.path("envelopes").asText());
+        Long requested = frame.hasNonNull("ttl") ? frame.get("ttl").asLong() : null;
+
+        StoredDirect saved = direct.save(rooms.find(roomId), ciphertext, envelopes, requested);
+
+        for (WebSocketSession listener : registry.sessions(roomId)) {
+            try {
+                sendDirect(listener, roomId, saved);
+            } catch (IOException e) {
+                log.debug("Личный кадр не ушёл, сессия снимается: {}", e.toString());
+                registry.unregister(roomId, listener);
+            }
+        }
+    }
+
+    private void sendDirect(WebSocketSession session, String roomId, StoredDirect message) throws IOException {
+        ObjectNode frame = json.createObjectNode();
+        frame.put("op", "direct");
+        frame.put("room", roomId);
+        frame.put("id", message.id());
+        // Ни отправителя, ни получателя: первый подписан внутри шифротекста, второго
+        // не существует нигде — он определяется тем, чей слот развернулся.
+        frame.put("expiresAt", message.expiresAt());
+        frame.put("ciphertext", Base64.getEncoder().encodeToString(message.ciphertext()));
+        frame.put("envelopes", Base64.getEncoder().encodeToString(message.envelopes()));
+        write(session, frame);
+    }
+
     private void send(WebSocketSession session, String device, JsonNode frame) throws IOException {
         String roomId = frame.path("room").asText();
         requireMember(roomId, device);
+
+        limitWrites(device);
 
         byte[] ciphertext = Base64.getDecoder().decode(frame.path("ciphertext").asText());
         // Срок — то, что попросил отправитель; зажимает его MessageService.
@@ -251,6 +497,13 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         answer.put("role", rooms.role(roomId, device));
         answer.put("seatsTaken", room.seatsTaken());
         answer.put("deckSpent", room.deckSpent());
+        // Настройка комнаты, не право участника: где личное выключено, вкладки быть
+        // не должно вовсе — предлагать действие, которое сервер отклонит, нечестно.
+        answer.put("directAllowed", room.directAllowed());
+
+        // Ключи переписки этой эпохи: без чужого ключа конверт не собрать, а без него
+        // человеку нельзя написать лично.
+        var dmKeys = epochs.dmKeys(roomId, room.keyEpoch());
 
         ArrayNode seats = answer.putArray("members");
         for (Member member : members) {
@@ -258,6 +511,7 @@ public class RoomSocketHandler extends TextWebSocketHandler {
             seat.put("device", member.pubkeySign());
             seat.put("card", member.card());
             seat.put("box", boxes.get(member.pubkeySign()));
+            seat.put("dm", dmKeys.get(member.pubkeySign()));
         }
 
         // Кому обёртки текущей эпохи ещё не положили. Раздать их может любой, у кого ключ
@@ -282,6 +536,49 @@ public class RoomSocketHandler extends TextWebSocketHandler {
         frame.put("expiresAt", message.expiresAt());
         frame.put("ciphertext", Base64.getEncoder().encodeToString(message.ciphertext()));
         write(session, frame);
+    }
+
+    /** Задача на пропуск. Соль одноразовая, поэтому её просят перед каждым таким действием. */
+    private void work(WebSocketSession session) throws IOException {
+        ProofOfWork.Stamp stamp = work.issue();
+
+        ObjectNode answer = json.createObjectNode();
+        answer.put("op", "work");
+        answer.put("salt", stamp.salt());
+        answer.put("bits", stamp.bits());
+        write(session, answer);
+    }
+
+    /**
+     * Проверка пропуска. Капча потребовала бы стороннего сервиса, то есть постороннего
+     * наблюдателя за каждым входом; здесь вместо этого просят потратить время процессора.
+     *
+     * <p>Порог в ноль битов выключает проверку целиком — это настройка для закрытого
+     * сервера, где заводить комнаты может десяток знакомых людей.
+     */
+    private void requireWork(JsonNode frame) {
+        if (work.bits() <= 0) {
+            return;
+        }
+        if (!work.redeem(frame.path("salt").asText(null), frame.path("counter").asText(null))) {
+            throw new IllegalArgumentException("пропуск не принят — пересчитайте задачу");
+        }
+    }
+
+    /** Один счётчик на все записи: иначе спам просто перетекает из ленты в записки. */
+    private void limitWrites(String device) {
+        limit("write:" + device, writePerMinute, Duration.ofMinutes(1));
+    }
+
+    private void limit(String key, int allowance, Duration window) {
+        if (!limits.allow(key, allowance, window)) {
+            throw new IllegalArgumentException("слишком часто — подождите и повторите");
+        }
+    }
+
+    private static String address(WebSocketSession session) {
+        Object stored = session.getAttributes().get(AuthHandshakeInterceptor.ADDRESS_ATTRIBUTE);
+        return stored == null ? "" : (String) stored;
     }
 
     private void fail(WebSocketSession session, String reason) throws IOException {

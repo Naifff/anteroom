@@ -41,8 +41,59 @@ dependencies {
 // README документирует /opt/messenger/messenger.jar — имя артефакта держим тем же.
 bootJar {
     archiveFileName = 'messenger.jar'
+
+    // Без этого в архив попадают время сборки и порядок файловой системы, и два
+    // прогона на одних исходниках дают разные хэши. Публиковать такой хэш можно,
+    // но проверить по нему нечего, кроме «файл не бился при скачивании».
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+/**
+ * Контрольная сумма релиза. Именно этот jar раздаёт браузерам код, который шифрует
+ * переписку, — поэтому админ должен уметь сверить скачанное с опубликованным.
+ *
+ * Отпечаток самого бандла считается иначе и печатается сервером при старте: в jar
+ * лежат ещё классы и зависимости, и его хэш меняется от вещей, к раздаваемому коду
+ * отношения не имеющих.
+ */
+tasks.register('releaseHashes') {
+    dependsOn 'bootJar'
+    def jar = layout.buildDirectory.file('libs/messenger.jar')
+    def sums = layout.buildDirectory.file('libs/SHA256SUMS')
+    inputs.file(jar)
+    outputs.file(sums)
+
+    doLast {
+        def digest = java.security.MessageDigest.getInstance('SHA-256')
+        jar.get().asFile.eachByte(64 * 1024) { buffer, read -> digest.update(buffer, 0, read) }
+        def hex = digest.digest().encodeHex().toString()
+
+        sums.get().asFile.text = "${hex}  messenger.jar\n"
+        logger.lifecycle("sha256:${hex}  messenger.jar")
+        logger.lifecycle('Отпечаток бандла сервер печатает при старте — его в релизные заметки берут оттуда.')
+    }
 }
 
 test {
     useJUnitPlatform()
+}
+
+// Селф-тесты на JS живут в src/test/resources/browser и в jar попадать не должны.
+// Открывать их надо с того же origin, что и /js/ с /vendor/, иначе import не разрешится, —
+// поэтому bootRun раздаёт их из отдельного каталога сборки, а bootJar о нём не знает.
+tasks.register('stageBrowserTests', Copy) {
+    from 'src/test/resources/browser'
+    into layout.buildDirectory.dir('browser-tests/browser')
+}
+
+bootRun {
+    dependsOn 'stageBrowserTests'
+    systemProperty 'spring.web.resources.static-locations',
+            'classpath:/static/,file:' + layout.buildDirectory.dir('browser-tests').get().asFile.path + '/'
+    // Без этого браузер держит прежний /js/*.js даже после перезагрузки страницы с другим
+    // запросом: модули кэшируются по своему URL, а он не менялся. Проверяешь при этом
+    // прошлую сборку и списываешь расхождение на что угодно, кроме кэша.
+    // Только для bootRun: в бою кэш статики нужен, и хэш релиза от него не страдает.
+    systemProperty 'spring.web.resources.cache.cachecontrol.no-store', 'true'
 }

@@ -74,7 +74,7 @@ class InviteServiceTest {
         jdbc.update("DELETE FROM device");
 
         devices.rememberSigningKey("owner");
-        roomId = rooms.create("owner", 3600, 86400);
+        roomId = rooms.create("owner", 3600, 86400, true);
     }
 
     /** Клиент делает токен сам и присылает серверу только его хэш. */

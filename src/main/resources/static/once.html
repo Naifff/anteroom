@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Фрагмент Referer и так не переносит, но и путь наружу отдавать незачем. -->
+<meta name="referrer" content="no-referrer">
+<!-- Превью-ботам показывать нечего: содержимое здесь появляется только после нажатия. -->
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>Одноразовая записка</title>
+<style>
+:root{
+  --bg:#191817; --surface:#211F1E; --surface-hi:#2B2827;
+  --ink:#E8E4DF; --ink-2:#8C8681; --ink-3:#5A5451; --ember:#D9542F;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;
+  line-height:1.45;-webkit-font-smoothing:antialiased;display:flex;justify-content:center}
+.wrap{width:100%;max-width:560px;padding:28px 20px calc(20px + env(safe-area-inset-bottom))}
+h1{font-size:19px;font-weight:600;letter-spacing:-.01em;margin:0 0 14px}
+p{margin:10px 0 0;font-size:13.5px;color:var(--ink-3);line-height:1.5}
+.act{margin-top:18px;border:0;cursor:pointer;background:var(--ember);color:#fff;font-weight:600;
+  font-family:var(--sans);font-size:14.5px;padding:11px 18px;border-radius:12px}
+.act:disabled{background:var(--surface-hi);color:var(--ink-3);cursor:default;font-weight:400}
+.note{background:var(--surface);border-radius:16px;padding:14px 16px;margin-top:18px;
+  font-size:15.5px;white-space:pre-wrap;word-wrap:break-word}
+.bad{font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Одноразовая записка</h1>
+  <p id="lead">Содержимое откроется один раз и в тот же момент исчезнет с сервера. Второй
+    попытки не будет — ни у вас, ни у того, кому вы перешлёте эту ссылку.</p>
+  <p>Первым может оказаться не адресат: одноразовость означает «ровно один раз», а не
+    «ровно тому, кому предназначалось».</p>
+
+  <button class="act" id="open">Открыть и уничтожить</button>
+
+  <div class="note hidden" id="note"></div>
+  <p class="bad hidden" id="error"></p>
+</div>
+
+<script src="/vendor/libsodium-sumo.js"></script>
+<script src="/vendor/libsodium-wrappers-sumo.js"></script>
+<script type="module">
+/*
+ * Страница отдельная от SPA и личности устройства не заводит: открывающий может быть
+ * посторонним, а ключ от записки едет во фрагменте ссылки и на сервер не попадает.
+ *
+ * Запрос уходит только по нажатию. Превью-боты и антивирусы ходят по ссылке GET'ом
+ * раньше человека — по GET здесь не тратится ничего.
+ */
+await sodium.ready;
+
+const $ = (id) => document.getElementById(id);
+const B64 = sodium.base64_variants.URLSAFE_NO_PADDING;
+const NONCE = sodium.crypto_aead_xchacha20poly1305_ietf_NPUBBYTES;
+
+const raw = location.hash.slice(1);
+const dot = raw.indexOf('.');
+const token = dot < 0 ? '' : raw.slice(0, dot);
+const key = dot < 0 ? null : sodium.from_base64(raw.slice(dot + 1), B64);
+
+if (!token || !key) {
+  $('open').disabled = true;
+  $('error').classList.remove('hidden');
+  $('error').textContent = 'ссылка неполная: в ней нет ключа от записки';
+}
+
+$('open').addEventListener('click', async () => {
+  $('open').disabled = true;
+  $('open').textContent = 'открываю…';
+  try {
+    // Токен телом, а не в адресе: адрес попадает в журнал веб-сервера и переживёт записку.
+    const response = await fetch('/api/once', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: token,
+    });
+    if (!response.ok) {
+      // Один и тот же текст на «уже открыли», «истёк срок» и «такой не было»: сервер их
+      // не различает, и показывать разницу здесь было бы выдумкой.
+      throw new Error('записки нет: её уже открыли, срок истёк или ссылка неверна');
+    }
+
+    const packed = new Uint8Array(await response.arrayBuffer());
+    const plain = sodium.to_string(sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+      null, packed.slice(NONCE), null, packed.slice(0, NONCE), key));
+
+    // Фрагмент убирается из адреса сразу: перезагрузка страницы уже ничего не откроет,
+    // а ключ в истории браузера и на чужом экране ни к чему.
+    history.replaceState(null, '', location.pathname);
+
+    $('lead').textContent = 'Записка уничтожена на сервере. Это единственная её копия — '
+      + 'закроете вкладку, и она пропадёт.';
+    $('open').classList.add('hidden');
+    $('note').classList.remove('hidden');
+    $('note').textContent = JSON.parse(plain).body;
+  } catch (e) {
+    $('open').classList.add('hidden');
+    $('error').classList.remove('hidden');
+    $('error').textContent = e.message;
+  }
+});
+</script>
+</body>
+</html>

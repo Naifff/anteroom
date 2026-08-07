@@ -65,7 +65,7 @@ class RoomServiceTest {
     @Test
     void seatsCreatorAsOwner() {
         String owner = device("owner-1");
-        String roomId = rooms.create(owner, 3600, 86400);
+        String roomId = rooms.create(owner, 3600, 86400, true);
 
         assertThat(rooms.role(roomId, owner)).isEqualTo("owner");
         assertThat(rooms.card(roomId, owner)).isBetween(0, 51);
@@ -75,34 +75,34 @@ class RoomServiceTest {
     void clampsCeilingToFiveDays() {
         // Потолок держится низким сознательно: исключённый участник уносит читаемую историю
         // за этот срок, и на полутора месяцах исключение стало бы формальностью.
-        String roomId = rooms.create(device("owner-2"), 3600, 999_999_999);
+        String roomId = rooms.create(device("owner-2"), 3600, 999_999_999, true);
 
         assertThat(rooms.find(roomId).maxTtl()).isEqualTo(RoomService.TTL_CEILING);
     }
 
     @Test
     void clampsDefaultToRoomCeiling() {
-        String roomId = rooms.create(device("owner-3"), 999_999, 3600);
+        String roomId = rooms.create(device("owner-3"), 999_999, 3600, true);
 
         assertThat(rooms.find(roomId).defaultTtl()).isEqualTo(3600);
     }
 
     @Test
     void refusesTtlBelowFloor() {
-        assertThatThrownBy(() -> rooms.create(device("owner-4"), 1, 1))
+        assertThatThrownBy(() -> rooms.create(device("owner-4"), 1, 1, true))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
     void startsAtFirstEpoch() {
-        String roomId = rooms.create(device("owner-5"), 3600, 86400);
+        String roomId = rooms.create(device("owner-5"), 3600, 86400, true);
 
         assertThat(rooms.find(roomId).keyEpoch()).isEqualTo(1);
     }
 
     @Test
     void givesEveryMemberOwnCard() {
-        String roomId = rooms.create(device("owner-6"), 3600, 86400);
+        String roomId = rooms.create(device("owner-6"), 3600, 86400, true);
 
         Set<Integer> cards = new HashSet<>();
         cards.add(rooms.card(roomId, "owner-6"));
@@ -117,7 +117,7 @@ class RoomServiceTest {
     void keepsCardOfDeviceThatJoinsTwice() {
         // Реконнект и повторный вход — не новый участник. Иначе колода тратилась бы
         // на переподключения.
-        String roomId = rooms.create(device("owner-7"), 3600, 86400);
+        String roomId = rooms.create(device("owner-7"), 3600, 86400, true);
         int first = rooms.join(roomId, device("member-a"), "member", "owner-7");
 
         assertThat(rooms.join(roomId, "member-a", "member", "owner-7")).isEqualTo(first);
@@ -128,7 +128,7 @@ class RoomServiceTest {
     void doesNotReturnCardOfDepartedMember() {
         // Иначе «восьмёрка бубён» через неделю окажется другим человеком, а её старые
         // реплики останутся висеть в ленте выше.
-        String roomId = rooms.create(device("owner-8"), 3600, 86400);
+        String roomId = rooms.create(device("owner-8"), 3600, 86400, true);
         int left = rooms.join(roomId, device("member-b"), "member", "owner-8");
         rooms.remove(roomId, "member-b");
 
@@ -139,7 +139,7 @@ class RoomServiceTest {
 
     @Test
     void keepsDepartedMemberRowWithLeftAt() {
-        String roomId = rooms.create(device("owner-9"), 3600, 86400);
+        String roomId = rooms.create(device("owner-9"), 3600, 86400, true);
         rooms.join(roomId, device("member-c"), "member", "owner-9");
         rooms.remove(roomId, "member-c");
 
@@ -150,7 +150,7 @@ class RoomServiceTest {
 
     @Test
     void stopsAcceptingWhenDeckIsSpent() {
-        String roomId = rooms.create(device("owner-10"), 3600, 86400);
+        String roomId = rooms.create(device("owner-10"), 3600, 86400, true);
         for (int i = 0; i < CardDealer.DECK_SIZE - 1; i++) {
             rooms.join(roomId, device("crowd-" + i), "member", "owner-10");
         }
@@ -162,7 +162,7 @@ class RoomServiceTest {
 
     @Test
     void countsSeatsOverWholeLifeOfRoom() {
-        String roomId = rooms.create(device("owner-11"), 3600, 86400);
+        String roomId = rooms.create(device("owner-11"), 3600, 86400, true);
         rooms.join(roomId, device("member-d"), "member", "owner-11");
         rooms.remove(roomId, "member-d");
 
@@ -173,7 +173,7 @@ class RoomServiceTest {
 
     @Test
     void listsOnlyPresentMembers() {
-        String roomId = rooms.create(device("owner-12"), 3600, 86400);
+        String roomId = rooms.create(device("owner-12"), 3600, 86400, true);
         rooms.join(roomId, device("member-e"), "member", "owner-12");
         rooms.join(roomId, device("member-f"), "member", "owner-12");
         rooms.remove(roomId, "member-e");
@@ -184,8 +184,8 @@ class RoomServiceTest {
 
     @Test
     void doesNotLeakMembersBetweenRooms() {
-        String first = rooms.create(device("owner-13"), 3600, 86400);
-        String second = rooms.create(device("owner-14"), 3600, 86400);
+        String first = rooms.create(device("owner-13"), 3600, 86400, true);
+        String second = rooms.create(device("owner-14"), 3600, 86400, true);
 
         assertThat(rooms.members(first)).extracting(Member::pubkeySign).containsExactly("owner-13");
         assertThat(rooms.members(second)).extracting(Member::pubkeySign).containsExactly("owner-14");
@@ -196,7 +196,7 @@ class RoomServiceTest {
         String traveller = device("traveller");
         Set<Integer> cards = new HashSet<>();
         for (int i = 0; i < 40; i++) {
-            String roomId = rooms.create(device("host-" + i), 3600, 86400);
+            String roomId = rooms.create(device("host-" + i), 3600, 86400, true);
             cards.add(rooms.join(roomId, traveller, "member", "host-" + i));
         }
 

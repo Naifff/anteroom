@@ -29,11 +29,44 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 
 .feed{flex:1;overflow-y:auto;padding:6px 16px 8px;display:flex;flex-direction:column;gap:2px;scrollbar-width:none}
 .feed::-webkit-scrollbar{display:none}
+
+/* Личное — отдельная вкладка, а не врезка в общую ленту: смешивать личное с общим
+   значит однажды ответить не туда. */
+.tabs{display:flex;gap:6px;padding:0 16px 4px}
+.tab{border:0;cursor:pointer;background:none;color:var(--ink-3);font-family:var(--sans);
+  font-size:13px;padding:6px 10px;border-radius:999px}
+.tab[aria-selected="true"]{background:var(--surface);color:var(--ink)}
+.threadbar{display:flex;align-items:center;gap:8px;padding:0 16px 6px;font-size:13px;color:var(--ink-2)}
+.back{border:0;cursor:pointer;background:var(--surface);color:var(--ink);border-radius:999px;
+  width:28px;height:28px;font-size:14px;line-height:1}
+.thread{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;cursor:pointer;
+  background:var(--surface);color:var(--ink);border-radius:14px;padding:11px 13px;font-family:var(--sans);
+  font-size:14.5px;margin-top:6px}
+.thread:disabled{cursor:default;background:none;color:var(--ink-3)}
+.thread .card{font-family:var(--mono);font-size:13px;min-width:3.4em}
+.thread-card{font-family:var(--mono);font-size:13px;color:var(--ink-2);align-self:center;margin-right:auto}
+.thread .last{color:var(--ink-3);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mine{align-self:flex-end}
+.mine .who{text-align:right}
+.empty{color:var(--ink-3);font-size:13px;padding:18px 2px;line-height:1.5}
 .msg{padding-top:12px}
 .who{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);margin-bottom:3px}
 .bubble{background:var(--surface);border-radius:16px;padding:9px 13px;font-size:15.5px;
   word-wrap:break-word;display:inline-block;max-width:83%}
 .bubble.bad{color:var(--ink-3);font-family:var(--mono);font-size:12.5px}
+.file{display:flex;flex-direction:column;gap:2px}
+.file .name{word-break:break-all}
+.file .meta{font-family:var(--mono);font-size:11px;color:var(--ink-3)}
+/* Оговорка стоит у каждого файла, а не один раз в справке: её место там, где человек
+   решает открывать. Антивирусная проверка при сквозном шифровании невозможна в принципе,
+   и умалчивать об этом нельзя. */
+.file .warn{font-size:11.5px;color:var(--ink-3);line-height:1.35}
+.file .get{margin-top:6px;align-self:flex-start;border:0;cursor:pointer;background:var(--surface-hi);
+  color:var(--ink);font-family:var(--sans);font-size:13px;padding:7px 12px;border-radius:10px}
+.file .get:disabled{color:var(--ink-3);cursor:default}
+.clip{width:36px;height:36px;flex:0 0 36px;border:0;border-radius:50%;cursor:pointer;
+  background:var(--surface-hi);color:var(--ink-2);display:grid;place-items:center;font-size:16px}
+.clip:disabled{color:var(--ink-3);cursor:default}
 
 .composer{margin:6px 12px calc(12px + env(safe-area-inset-bottom));background:var(--surface);
   border-radius:24px;padding:7px 7px 7px 14px;display:flex;align-items:center;gap:8px}
@@ -95,11 +128,23 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
     <button class="me-chip" id="meChip" aria-haspopup="dialog"><b id="seats">…</b> · <span id="meFp">…</span></button>
   </div>
 
+  <div class="tabs hidden" id="tabs">
+    <button type="button" class="tab" id="tabRoom" aria-selected="true">Лента</button>
+    <button type="button" class="tab" id="tabDm" aria-selected="false">Личное</button>
+  </div>
+  <div class="threadbar hidden" id="threadBar">
+    <button type="button" class="back" id="back" aria-label="Назад">←</button>
+    <span id="threadWho"></span>
+  </div>
+
   <div class="feed" id="feed"></div>
+  <div class="feed hidden" id="dmPane"></div>
 
   <form class="composer" id="composer">
     <input id="text" placeholder="Сообщение" autocomplete="off" disabled>
     <button type="button" class="ttl-pick" id="ttlPick" aria-label="Срок жизни">48 ч</button>
+    <button type="button" class="clip" id="attach" aria-label="Вложить файл" disabled>⎘</button>
+    <input type="file" id="file" class="hidden">
     <button class="icon" id="send" aria-label="Отправить" disabled>↑</button>
   </form>
   <div class="note" id="status">загрузка…</div>
@@ -158,6 +203,30 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
     </div>
     <textarea class="field hidden" id="inviteLink" rows="3" readonly></textarea>
 
+    <h4>Одноразовая записка</h4>
+    <p>Текст уедет на сервер зашифрованным, ключ останется в ссылке и туда не попадёт.
+      Первый, кто нажмёт кнопку на странице записки, увидит текст — и записка исчезнет.
+      Первым может оказаться не адресат.</p>
+    <textarea class="field" id="onceText" rows="3" placeholder="Что показать ровно один раз"></textarea>
+    <div class="row">
+      <button class="act" id="makeOnce" disabled>Создать ссылку</button>
+    </div>
+    <textarea class="field hidden" id="onceLink" rows="3" readonly></textarea>
+
+    <h4 id="moderHead" class="hidden">Состав комнаты</h4>
+    <p id="moderWhy" class="hidden">Исключение поднимает эпоху ключа: новое исключённый уже не
+      прочитает. Всё, что он успел прочитать раньше, останется у него — перешифровать прошлое
+      невозможно. Его карта в колоду не вернётся.</p>
+    <div id="moderList"></div>
+
+    <h4 id="wipeHead" class="hidden">Стереть переписку</h4>
+    <p id="wipeWhy" class="hidden">Сервер немедленно удалит все сообщения, записки и вложения
+      этой комнаты. У тех, у кого вкладка открыта, лента опустеет. Копии, снятые до этого,
+      никуда не денутся.</p>
+    <div class="row hidden" id="wipeRow">
+      <button class="act danger" id="doWipe">Стереть всё</button>
+    </div>
+
     <h4>У меня уже есть ключ</h4>
     <p>Импорт заменит ключ на этом устройстве. Прежняя личность, если она не выгружена,
       будет потеряна безвозвратно.</p>
@@ -187,9 +256,11 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);font
 <script src="/vendor/libsodium-sumo.js"></script>
 <script src="/vendor/libsodium-wrappers-sumo.js"></script>
 <script type="module">
-import { newSeed, keysFromSeed, saveSeed, loadSeed, saveServerKey, loadServerKey } from '/js/identity.js';
+import { newSeed, keysFromSeed, dmKeysFrom, saveSeed, loadSeed, saveServerKey, loadServerKey } from '/js/identity.js';
+import { packEnvelopes, openSlot, signedPayload } from '/js/direct.js';
 import { seedToWords, wordsToSeed } from '/js/words.js';
 import { encryptSeed, decryptSeed } from '/js/keyfile.js';
+import { encryptFile, decryptFile, MAX_PLAINTEXT } from '/js/attach.js';
 
 await sodium.ready;
 
@@ -623,14 +694,18 @@ function writeLink() {
   }
 }
 
-function seal(plaintext) {
+function sealWith(key, plaintext) {
   const nonce = sodium.randombytes_buf(NONCE);
   const box = sodium.crypto_aead_xchacha20poly1305_ietf_encrypt(
-    sodium.from_string(plaintext), null, null, nonce, roomKey);
+    sodium.from_string(plaintext), null, null, nonce, key);
   const packed = new Uint8Array(nonce.length + box.length);
   packed.set(nonce);
   packed.set(box, nonce.length);
   return sodium.to_base64(packed, sodium.base64_variants.ORIGINAL);
+}
+
+function seal(plaintext) {
+  return sealWith(roomKey, plaintext);
 }
 
 function open(payload) {
@@ -660,18 +735,118 @@ $('ttlPick').addEventListener('click', () => {
 // перерисовывается на месте, а не перезапрашивается. Перезапрос задваивал реплики.
 const shown = new Map();
 
+/**
+ * Конверт сообщения.
+ *
+ * Поле версии обязано быть с самого начала: без него смена криптосхемы ломает всё,
+ * что уже отправлено, и миграцию некуда зацепить. Вложение — тот же конверт, только
+ * вместо текста в нём ключ файла, имя и MIME-тип: в схеме БД их нет и быть не должно.
+ */
+const ENVELOPE_VERSION = 1;
+
+function textEnvelope(body) {
+  return JSON.stringify({ v: ENVELOPE_VERSION, t: 'text', body });
+}
+
+function fileEnvelope(id, key, file, size) {
+  return JSON.stringify({
+    v: ENVELOPE_VERSION, t: 'file', id,
+    key: sodium.to_base64(key, B64),
+    name: file.name,
+    mime: file.type || 'application/octet-stream',
+    size,
+  });
+}
+
 function fill(bubble, ciphertext) {
   bubble.classList.remove('bad');
+  bubble.textContent = '';
+
   if (!roomKey) {
     bubble.classList.add('bad');
     bubble.textContent = 'ключа комнаты нет — расшифровать нечем';
     return;
   }
+
+  let envelope;
   try {
-    bubble.textContent = open(ciphertext);
+    envelope = JSON.parse(open(ciphertext));
   } catch {
     bubble.classList.add('bad');
     bubble.textContent = 'не расшифровывается: ключ от другой эпохи или другой комнаты';
+    return;
+  }
+
+  if (envelope.v !== ENVELOPE_VERSION) {
+    bubble.classList.add('bad');
+    bubble.textContent = `сообщение формата ${envelope.v}, эта сборка знает только ${ENVELOPE_VERSION}`;
+    return;
+  }
+
+  if (envelope.t === 'file') {
+    drawFile(bubble, envelope);
+  } else {
+    bubble.textContent = envelope.body;
+  }
+}
+
+function humanSize(bytes) {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`;
+}
+
+function drawFile(bubble, envelope) {
+  const box = document.createElement('div');
+  box.className = 'file';
+
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = envelope.name;
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = humanSize(envelope.size);
+
+  const warn = document.createElement('div');
+  warn.className = 'warn';
+  warn.textContent = 'файл никто не проверял: сервер видит только шифротекст, и антивирус '
+    + 'при сквозном шифровании невозможен в принципе';
+
+  const get = document.createElement('button');
+  get.className = 'get';
+  get.textContent = 'Скачать';
+  get.addEventListener('click', () => download(envelope, get, meta));
+
+  box.append(name, meta, warn, get);
+  bubble.append(box);
+}
+
+/** Скачивание: шифротекст с сервера, расшифровка в памяти, blob-URL. */
+async function download(envelope, button, meta) {
+  button.disabled = true;
+  meta.textContent = `${humanSize(envelope.size)} · качаю…`;
+  try {
+    const response = await fetch(`/api/file/${encodeURIComponent(envelope.id)}`);
+    if (!response.ok) {
+      throw new Error(response.status === 404 ? 'файла больше нет: истёк срок' : 'сервер не отдал файл');
+    }
+    const ciphertext = new Uint8Array(await response.arrayBuffer());
+    const plain = decryptFile(ciphertext, sodium.from_base64(envelope.key, B64));
+
+    const url = URL.createObjectURL(new Blob([plain], { type: envelope.mime }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = envelope.name;
+    link.click();
+    // Ссылка на блоб держит копию файла в памяти вкладки, пока её не отозвать.
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+    meta.textContent = humanSize(envelope.size);
+  } catch (e) {
+    meta.textContent = `${humanSize(envelope.size)} · ${e.message}`;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -716,6 +891,17 @@ function tickExpiry() {
     }
     entry.row.classList.toggle('fading', left < FADE_BEFORE_MS);
   }
+
+  // Личные подчиняются тем же срокам: отдельных правил для них не заводили.
+  let dropped = false;
+  for (const [device, line] of threads) {
+    const alive = line.filter((entry) => entry.expiresAt > now);
+    if (alive.length !== line.length) {
+      threads.set(device, alive);
+      dropped = true;
+    }
+  }
+  if (dropped && view !== 'room') renderView();
 }
 setInterval(tickExpiry, 1000);
 
@@ -754,7 +940,7 @@ $('makeInvite').addEventListener('click', async () => {
   const token = sodium.to_base64(sodium.randombytes_buf(32), B64);
   const ephemeral = sodium.crypto_box_keypair();
 
-  ask({
+  await withProof({
     op: 'invite', room: roomId, tokenHash: await sha256Url(token),
     role: 'member', ttl: 86400, uses: 1,
     wrapped: sodium.to_base64(sodium.crypto_box_seal(roomKey, ephemeral.publicKey), B64ORIG),
@@ -766,6 +952,358 @@ $('makeInvite').addEventListener('click', async () => {
   $('inviteLink').select();
 });
 
+/**
+ * Одноразовая записка.
+ *
+ * Ключ у неё свой, не ключ комнаты: ссылку отдают наружу, и ключом комнаты она бы
+ * открывала всю переписку. На сервер уходит шифротекст и SHA-256 токена, а сам токен
+ * с ключом живут во фрагменте — то есть ни в логах, ни в Referer их нет.
+ */
+$('makeOnce').addEventListener('click', async () => {
+  const body = $('onceText').value;
+  if (!body || !roomId) return;
+
+  const token = sodium.to_base64(sodium.randombytes_buf(32), B64);
+  const key = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
+
+  ask({
+    op: 'once', room: roomId, tokenHash: await sha256Url(token),
+    ciphertext: sealWith(key, textEnvelope(body)),
+    ttl: TTL_CHOICES[ttlChoice].seconds,
+  });
+
+  $('onceText').value = '';
+  $('onceLink').classList.remove('hidden');
+  $('onceLink').value = `${location.origin}/once#${token}.${sodium.to_base64(key, B64)}`;
+  $('onceLink').select();
+});
+
+/* ---------- модерация ---------- */
+
+/**
+ * Состав комнаты с кнопкой исключения.
+ *
+ * Роль показывается только здесь, в момент действия, а не рядом с каждой репликой:
+ * в ленте она ничего не значит и только сообщала бы, к кому идти с просьбами.
+ */
+function drawModeration(frame) {
+  const mayIssue = frame.role === 'owner' || frame.role === 'admin';
+  for (const id of ['moderHead', 'moderWhy']) {
+    $(id).classList.toggle('hidden', !mayIssue);
+  }
+  for (const id of ['wipeHead', 'wipeWhy', 'wipeRow']) {
+    $(id).classList.toggle('hidden', frame.role !== 'owner');
+  }
+
+  const list = $('moderList');
+  list.textContent = '';
+  if (!mayIssue) return;
+
+  for (const seat of frame.members) {
+    if (seat.device === me()) continue;
+    const row = document.createElement('div');
+    row.className = 'row';
+
+    const who = document.createElement('span');
+    who.className = 'thread-card';
+    who.textContent = cardName(seat.card);
+
+    const kick = document.createElement('button');
+    kick.className = 'act danger';
+    kick.textContent = 'Исключить';
+    kick.addEventListener('click', () => {
+      // Подтверждение обязательно: действие необратимо, карта не вернётся в колоду.
+      if (!confirm(`Исключить ${cardName(seat.card)}? Вернуть участника прежней картой уже нельзя.`)) {
+        return;
+      }
+      ask({ op: 'remove', room: roomId, device: seat.device });
+    });
+
+    row.append(who, kick);
+    list.append(row);
+  }
+}
+
+$('doWipe').addEventListener('click', () => {
+  if (!roomId) return;
+  if (!confirm('Стереть все сообщения, записки и вложения этой комнаты? Отменить нельзя.')) {
+    return;
+  }
+  ask({ op: 'wipe', room: roomId });
+});
+
+function onWiped() {
+  for (const entry of shown.values()) {
+    entry.row.remove();
+  }
+  shown.clear();
+  threads.clear();
+  seenDirect.clear();
+  lastSeenId = 0;
+  lastSeenDirect = 0;
+  $('status').textContent = 'переписка стёрта';
+  renderView();
+}
+
+/* ---------- пропуск на действие ---------- */
+
+/*
+ * Hashcash вместо капчи. Капча потребовала бы стороннего сервиса, то есть постороннего
+ * наблюдателя за каждым входом; здесь вместо этого тратится время процессора. Соль
+ * выдаёт сервер и гасит при предъявлении, поэтому решение нельзя ни заготовить, ни
+ * использовать дважды.
+ */
+let workWaiting = null;
+
+function askWork() {
+  return new Promise((resolve, reject) => {
+    workWaiting = { resolve, reject };
+    ask({ op: 'work' });
+  });
+}
+
+function solveWork(stamp) {
+  for (let counter = 0; ; counter++) {
+    const digest = sodium.crypto_hash_sha256(sodium.from_string(`${stamp.salt}:${counter}`));
+    let zeros = 0;
+    for (const byte of digest) {
+      if (byte === 0) { zeros += 8; continue; }
+      zeros += Math.clz32(byte) - 24;
+      break;
+    }
+    if (zeros >= stamp.bits) return String(counter);
+  }
+}
+
+/** Перебор синхронный и на доли секунды подвешивает вкладку — поэтому про него говорят вслух. */
+async function withProof(frame) {
+  const was = $('status').textContent;
+  $('status').textContent = 'считаю пропуск…';
+  try {
+    const stamp = await askWork();
+    if (stamp.bits > 0) {
+      frame.salt = stamp.salt;
+      frame.counter = solveWork(stamp);
+    }
+    ask(frame);
+    $('status').textContent = was;
+  } catch (e) {
+    $('status').textContent = e.message;
+  }
+}
+
+/* ---------- личные сообщения ---------- */
+
+/*
+ * Личное живёт внутри комнаты: карта существует только здесь, отдельного списка контактов
+ * быть не может — он связал бы личности между комнатами.
+ *
+ * Получатель скрыт от сервера рассылкой на всю колоду. Мы разворачиваем ровно один слот —
+ * свой, по номеру своей карты. Не подошло — сообщение не нам, и это всё, что мы узнаём.
+ */
+let view = 'room';          // room | dm | thread
+let peer = null;            // устройство собеседника
+let dmKeys = null;          // пара переписки на текущую комнату и эпоху
+let myCard = null;
+let directAllowed = true;
+let lastSeenDirect = 0;
+
+const dmPublic = new Map();     // устройство -> публичный ключ переписки этой эпохи
+const threads = new Map();      // устройство собеседника -> список реплик
+const seenDirect = new Set();
+
+const me = () => sodium.to_base64(keys.signPublic, B64);
+
+function deviceByCard(card) {
+  for (const [device, seat] of cards) {
+    if (seat === card) return device;
+  }
+  return null;
+}
+
+function dmEnvelope(toCard, body) {
+  // Подпись лежит внутри шифротекста, снаружи её нет: подпись рядом с сообщением выдала бы
+  // отправителя серверу. Внутри она отвечает на другой вопрос — кто из участников это писал,
+  // потому что ключ сообщения выбирает сам отправитель и «от кого» без подписи ничего не стоит.
+  const signature = sodium.crypto_sign_detached(
+    signedPayload(roomId, epoch, toCard, body), keys.signSecret);
+  return JSON.stringify({
+    v: ENVELOPE_VERSION, t: 'dm', from: me(), to: toCard, body,
+    sig: sodium.to_base64(signature, B64),
+  });
+}
+
+function sendDirect(body) {
+  const peerCard = cards.get(peer);
+  const peerKey = dmPublic.get(peer);
+  if (peerCard === undefined || !peerKey) {
+    $('status').textContent = 'у этого участника ещё нет ключа переписки — он не открывал вкладку';
+    return;
+  }
+
+  const messageKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
+  const envelopes = packEnvelopes(messageKey, [
+    [peerCard, sodium.from_base64(peerKey, B64)],
+    // Свой слот тоже настоящий: без него не прочитать собственную переписку.
+    [myCard, dmKeys.publicKey],
+  ]);
+
+  ask({
+    op: 'dm', room: roomId,
+    ciphertext: sealWith(messageKey, dmEnvelope(peerCard, body)),
+    envelopes: sodium.to_base64(envelopes, B64ORIG),
+    ttl: TTL_CHOICES[ttlChoice].seconds,
+  });
+}
+
+function onDirect(frame) {
+  if (seenDirect.has(frame.id)) return;
+  seenDirect.add(frame.id);
+  lastSeenDirect = Math.max(lastSeenDirect, frame.id);
+
+  if (!dmKeys || myCard === null) return;
+
+  const messageKey = openSlot(sodium.from_base64(frame.envelopes, B64ORIG), myCard, dmKeys);
+  if (!messageKey) return;   // не нам
+
+  let note;
+  try {
+    const packed = sodium.from_base64(frame.ciphertext, B64ORIG);
+    note = JSON.parse(sodium.to_string(sodium.crypto_aead_xchacha20poly1305_ietf_decrypt(
+      null, packed.slice(NONCE), null, packed.slice(0, NONCE), messageKey)));
+  } catch {
+    return;
+  }
+  if (note.v !== ENVELOPE_VERSION || note.t !== 'dm') return;
+
+  // Кто написал — по подписи, а не по слову «from». Иначе участник выдаёт себя за чужую карту.
+  if (!cards.has(note.from)) return;
+  const signed = signedPayload(roomId, epoch, note.to, note.body);
+  try {
+    if (!sodium.crypto_sign_verify_detached(
+        sodium.from_base64(note.sig, B64), signed, sodium.from_base64(note.from, B64))) {
+      return;
+    }
+  } catch {
+    return;
+  }
+
+  const mine = note.from === me();
+  const other = mine ? deviceByCard(note.to) : note.from;
+  if (!other) return;
+
+  if (!threads.has(other)) threads.set(other, []);
+  threads.get(other).push({ id: frame.id, mine, body: note.body, expiresAt: frame.expiresAt });
+  threads.get(other).sort((a, b) => a.id - b.id);
+
+  if (view !== 'room') renderView();
+}
+
+function drawThreadList() {
+  const pane = $('dmPane');
+  pane.textContent = '';
+
+  const others = [...cards.keys()].filter((device) => device !== me());
+  if (others.length === 0) {
+    pane.append(note('В комнате пока никого, кроме вас.'));
+    return;
+  }
+
+  others.sort((a, b) => cards.get(a) - cards.get(b));
+  for (const device of others) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'thread';
+
+    const card = document.createElement('span');
+    card.className = 'card';
+    card.textContent = cardName(cards.get(device));
+
+    const last = document.createElement('span');
+    last.className = 'last';
+    const line = threads.get(device);
+    if (line && line.length) {
+      const tail = line[line.length - 1];
+      last.textContent = (tail.mine ? 'вы: ' : '') + tail.body;
+    } else if (!dmPublic.get(device)) {
+      // Переписку показываем всегда, даже когда ответить пока нечем: скрыть уже
+      // полученное было бы хуже, чем объяснить, почему не отправляется.
+      last.textContent = 'ещё не открывал вкладку — написать нельзя';
+      row.disabled = true;
+    } else {
+      last.textContent = 'написать';
+    }
+
+    row.append(card, last);
+    row.addEventListener('click', () => {
+      peer = device;
+      view = 'thread';
+      renderView();
+    });
+    pane.append(row);
+  }
+}
+
+function drawThread() {
+  const pane = $('dmPane');
+  pane.textContent = '';
+
+  const line = threads.get(peer) || [];
+  if (line.length === 0) {
+    pane.append(note('Здесь пока пусто. Всё, что вы напишете, увидит только этот участник — '
+      + 'сервер не узнает даже, кому адресовано.'));
+  }
+
+  for (const entry of line) {
+    const row = document.createElement('div');
+    row.className = entry.mine ? 'msg mine' : 'msg';
+
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.textContent = entry.mine ? 'вы' : cardName(cards.get(peer));
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = entry.body;
+
+    row.append(who, bubble);
+    pane.append(row);
+  }
+  pane.scrollTop = pane.scrollHeight;
+}
+
+function note(text) {
+  const box = document.createElement('div');
+  box.className = 'empty';
+  box.textContent = text;
+  return box;
+}
+
+function renderView() {
+  $('feed').classList.toggle('hidden', view !== 'room');
+  $('dmPane').classList.toggle('hidden', view === 'room');
+  $('tabs').classList.toggle('hidden', !roomId || !directAllowed || view === 'thread');
+  $('threadBar').classList.toggle('hidden', view !== 'thread');
+  $('tabRoom').setAttribute('aria-selected', String(view === 'room'));
+  $('tabDm').setAttribute('aria-selected', String(view !== 'room'));
+  $('composer').classList.toggle('hidden', view === 'dm');
+  $('text').placeholder = view === 'thread' ? 'Написать лично' : 'Сообщение';
+  // Файлов в личных сообщениях нет: блоб один, и сервер видит, кто его качает. Текст
+  // получателя скрывает, а вложение выдаёт — поддерживать это «с оговоркой» нельзя.
+  $('attach').disabled = view !== 'room' || !roomKey;
+
+  if (view === 'thread') {
+    $('threadWho').textContent = 'Личное · ' + cardName(cards.get(peer));
+    drawThread();
+  } else if (view === 'dm') {
+    drawThreadList();
+  }
+}
+
+$('tabRoom').addEventListener('click', () => { view = 'room'; peer = null; renderView(); });
+$('tabDm').addEventListener('click', () => { view = 'dm'; peer = null; renderView(); });
+$('back').addEventListener('click', () => { view = 'dm'; peer = null; renderView(); });
+
 /** Погашение: развернуть эфемерным ключом и тут же перешифровать под свой X25519. */
 function onRedeemed(frame) {
   const secret = pendingInvite;
@@ -776,7 +1314,7 @@ function onRedeemed(frame) {
     // отдельного экрана «вы владелец, теперь создайте комнату» не нужно.
     history.replaceState(null, '', '/');
     roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
-    ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
+    withProof({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
     return;
   }
 
@@ -817,9 +1355,24 @@ function wrapForPending(pending) {
 function onRoom(frame) {
   roomId = frame.room;
   epoch = frame.epoch;
+  myCard = frame.card;
+  directAllowed = frame.directAllowed !== false;
   cards.clear();
+  dmPublic.clear();
   for (const seat of frame.members) {
     cards.set(seat.device, seat.card);
+    if (seat.dm) dmPublic.set(seat.device, seat.dm);
+  }
+
+  // Ключ переписки выводится из seed, а не хранится: восстановление из 24 слов обязано
+  // вернуть и личную переписку тоже. Публикуем при каждом входе — эпоха могла смениться.
+  if (directAllowed) {
+    dmKeys = dmKeysFrom(seed, roomId, epoch);
+    const mine = sodium.to_base64(dmKeys.publicKey, B64);
+    if (dmPublic.get(me()) !== mine) {
+      ask({ op: 'dm-key', room: roomId, epoch, key: mine });
+      dmPublic.set(me(), mine);
+    }
   }
 
   $('roomTitle').textContent = 'Вылазка';
@@ -829,6 +1382,9 @@ function onRoom(frame) {
   for (const id of ['inviteHead', 'inviteWhy', 'inviteRow']) {
     $(id).classList.toggle('hidden', !mayInvite);
   }
+  // Записку может выпустить любой участник: это способ отправить сообщение, а не право.
+  $('makeOnce').disabled = false;
+  drawModeration(frame);
   $('seats').textContent = `${cardName(frame.card)} · ${frame.seatsTaken}/52`;
   if (frame.deckSpent) {
     $('status').textContent = 'колода кончилась — комната больше никого не принимает';
@@ -839,10 +1395,11 @@ function onRoom(frame) {
   // Флаг обязателен: ответ на enter — такой же кадр room, и без него вышел бы цикл.
   if (!entered) {
     entered = true;
-    ask({ op: 'enter', room: roomId, since: lastSeenId });
+    ask({ op: 'enter', room: roomId, since: lastSeenId, sinceDirect: lastSeenDirect });
   }
 
   redraw();
+  renderView();
 
   if (roomKey) {
     writeLink();
@@ -929,6 +1486,7 @@ async function connect() {
     $('status').textContent = 'в комнату — только по приглашению; сервер пока принимает любое устройство';
     $('text').disabled = false;
     $('send').disabled = false;
+    $('attach').disabled = false;
 
     // Свой X25519 — первым делом: без него участнику нечем обернуть ключ комнаты.
     ask({ op: 'hello', box: sodium.to_base64(keys.boxPublic, B64) });
@@ -939,9 +1497,9 @@ async function connect() {
       inviteToken = null;
     } else if (!roomId && !createRefused) {
       roomKey = sodium.crypto_aead_xchacha20poly1305_ietf_keygen();
-      ask({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
+      withProof({ op: 'create', defaultTtl: 172800, maxTtl: 432000 });
     } else {
-      ask({ op: 'enter', room: roomId, since: lastSeenId });
+      ask({ op: 'enter', room: roomId, since: lastSeenId, sinceDirect: lastSeenDirect });
       entered = true;
     }
   };
@@ -950,10 +1508,25 @@ async function connect() {
     const frame = JSON.parse(event.data);
     if (frame.op === 'room') onRoom(frame);
     else if (frame.op === 'msg') render(frame);
+    else if (frame.op === 'direct') onDirect(frame);
     else if (frame.op === 'key') onKey(frame);
     else if (frame.op === 'redeemed') onRedeemed(frame);
+    else if (frame.op === 'work') {
+      workWaiting?.resolve(frame);
+      workWaiting = null;
+    }
+    else if (frame.op === 'wiped') onWiped();
+    else if (frame.op === 'upload-ready') {
+      uploadWaiting?.resolve(frame);
+      uploadWaiting = null;
+    }
     else if (frame.op === 'error') {
       if (frame.reason === 'нужно приглашение') createRefused = true;
+      // Отказ мог прийти на запрос пропуска — тогда ждать его дальше бессмысленно.
+      uploadWaiting?.reject(new Error(frame.reason));
+      uploadWaiting = null;
+      workWaiting?.reject(new Error(frame.reason));
+      workWaiting = null;
       $('status').textContent = frame.reason;
     }
   };
@@ -962,16 +1535,85 @@ async function connect() {
     $('status').textContent = 'связь потеряна, переподключаюсь…';
     $('text').disabled = true;
     $('send').disabled = true;
+    $('attach').disabled = true;
+    // Пропуск на загрузку с прошлого соединения уже не придёт.
+    uploadWaiting?.reject(new Error('связь потеряна'));
+    uploadWaiting = null;
+    workWaiting?.reject(new Error('связь потеряна'));
+    workWaiting = null;
     setTimeout(connect, 1000);
   };
 }
 
 $('composer').addEventListener('submit', (event) => {
   event.preventDefault();
-  if (!$('text').value || !roomKey) return;
-  ask({ op: 'send', room: roomId, ciphertext: seal($('text').value),
-        ttl: TTL_CHOICES[ttlChoice].seconds });
+  const body = $('text').value;
+  if (!body || !roomKey) return;
+
+  if (view === 'thread') {
+    sendDirect(body);
+  } else {
+    ask({ op: 'send', room: roomId, ciphertext: seal(textEnvelope(body)),
+          ttl: TTL_CHOICES[ttlChoice].seconds });
+  }
   $('text').value = '';
+});
+
+/* ---------- вложения ---------- */
+
+// Пропуск на загрузку приезжает отдельным кадром, поэтому запрос ждёт ответа. Одна
+// загрузка за раз: параллельные пришлось бы различать по id, а выигрыш нулевой.
+let uploadWaiting = null;
+
+function askUploadToken(size) {
+  return new Promise((resolve, reject) => {
+    uploadWaiting = { resolve, reject };
+    ask({ op: 'upload', room: roomId, size, ttl: TTL_CHOICES[ttlChoice].seconds });
+  });
+}
+
+$('attach').addEventListener('click', () => $('file').click());
+
+$('file').addEventListener('change', async () => {
+  const file = $('file').files[0];
+  $('file').value = '';
+  if (!file || !roomKey) return;
+
+  if (file.size > MAX_PLAINTEXT) {
+    $('status').textContent = `${file.name} больше 20 МБ — сервер такой не примет`;
+    return;
+  }
+
+  $('attach').disabled = true;
+  try {
+    $('status').textContent = `${file.name}: шифрую…`;
+    const plain = new Uint8Array(await file.arrayBuffer());
+    // Ключ случайный на каждый файл. В сообщение он попадёт вместе с именем и типом —
+    // всё это уже под ключом комнаты, и на сервере остаётся только размер и время.
+    const { key, ciphertext } = encryptFile(plain);
+
+    $('status').textContent = `${file.name}: отправляю…`;
+    const permit = await askUploadToken(ciphertext.length);
+
+    // Пропуск заголовком, а не параметром запроса: параметры попадают в access.log.
+    const response = await fetch('/api/file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-Upload-Token': permit.token },
+      body: ciphertext,
+    });
+    if (!response.ok) {
+      throw new Error(response.status === 413 ? 'файл больше, чем принимает сервер' : 'сервер не принял файл');
+    }
+
+    ask({ op: 'send', room: roomId, ttl: TTL_CHOICES[ttlChoice].seconds,
+          ciphertext: seal(fileEnvelope(permit.id, key, file, plain.length)) });
+    $('status').textContent = '';
+  } catch (e) {
+    $('status').textContent = `${file.name}: ${e.message}`;
+  } finally {
+    uploadWaiting = null;
+    $('attach').disabled = false;
+  }
 });
 
 readLink();

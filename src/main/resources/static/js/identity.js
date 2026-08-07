@@ -15,6 +15,9 @@ const SERVER_KEY = 'server-key';
 /** Домен для вывода под-seed ключа шифрования. Менять нельзя: сменится — сменится личность. */
 const BOX_DOMAIN = 'box';
 
+/** Домен ключей личной переписки. Тоже менять нельзя: сменится — пропадёт вся переписка. */
+const DM_DOMAIN = 'dm';
+
 export function newSeed() {
     return sodium.randombytes_buf(32);
 }
@@ -44,6 +47,21 @@ export function keysFromSeed(seed) {
         boxPublic: boxing.publicKey,
         boxSecret: boxing.privateKey,
     };
+}
+
+/**
+ * Ключ личной переписки: свой на каждую пару «комната + эпоха».
+ *
+ * Не X25519 устройства: тот живёт вечно, и его утечка раскрыла бы всю личную переписку
+ * задним числом — ротации ключа комнаты долгоживущий ключ не подчиняется.
+ *
+ * Выводится из seed, а не берётся случайным: случайный пришлось бы хранить отдельно, и
+ * восстановление из 24 слов не вернуло бы доступ к своей же переписке.
+ */
+export function dmKeysFrom(seed, roomId, epoch) {
+    const material = sodium.crypto_generichash(
+        32, sodium.from_string(`${DM_DOMAIN}:${roomId}:${epoch}`), seed);
+    return sodium.crypto_box_seed_keypair(material);
 }
 
 export async function saveSeed(seed) {
