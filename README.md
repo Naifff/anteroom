@@ -1,41 +1,65 @@
-# Мессенджер
+# Anteroom
 
-Веб-мессенджер со сквозным шифрованием. Открывается в браузере, ставить нечего. Вход по
-приглашению, без почты и телефона. Сообщения удаляются по истечении срока.
+End-to-end encrypted web messenger. It opens in a browser, so there is nothing to install.
+Access is by invitation only — no email address, no phone number, no username. Messages are
+deleted when their lifetime expires.
 
-Разворачивается на своём сервере: один jar и каталог с данными.
+You host it yourself: one jar file and a data directory.
 
----
-
-## Что гарантируется
-
-- Сервер не может прочитать переписку. Он хранит шифротекст и не знает ключей.
-- Ни почта, ни телефон, ни имя не спрашиваются и нигде не хранятся.
-- Сообщение удаляется с диска по истечении срока — независимо от того, прочитал его кто-то
-  или нет, работал ли сервер всё это время.
-- Приглашение можно ограничить сроком и числом использований, а после погашения оно
-  перестаёт открывать комнату.
-
-## Чего система не даёт
-
-Прочитайте это до того, как на неё положатся.
-
-- **Удаление у собеседника не гарантировано.** Сообщение исчезнет из интерфейса и с сервера,
-  но снимок экрана, фотография экрана или изменённый клиент сохранят его. Ни один мессенджер
-  этого не решает.
-- **Сервер видит метаданные.** Кто, когда, в какой комнате, какого размера сообщение и на
-  какой срок. Содержимое — нет, факт общения — да.
-- **Исключённый участник сохраняет то, что уже прочитал**, и может расшифровать историю
-  прежних эпох ключа. Именно поэтому предельный срок жизни сообщения — пять суток.
-- **Проверка файлов на вирусы невозможна** в принципе: сервер видит шифротекст.
-- Владелец сервера может подменить выдаваемый браузеру код. При самостоятельном хостинге это
-  означает «вы можете атаковать сами себя», но если сервер чужой — доверие к нему обязательно.
+The interface is in Russian. Russian documentation: [README.ru.md](README.ru.md).
 
 ---
 
-## Установка
+## Status
 
-Нужны Java 21 и любой обратный прокси с TLS. Ниже — Caddy, он проще всего.
+Working software, deployed and used, but **it has never been audited by anyone outside the
+project.** The cryptography is standard and the constructions are conventional, which is not
+the same thing as a review. Read [Security](#security) before you rely on this for anything
+that matters.
+
+## What it guarantees
+
+- The server cannot read the conversation. It stores ciphertext and never holds the keys.
+- No email address, phone number or name is requested or stored anywhere.
+- A message is erased from disk when its lifetime runs out — whether or not anyone read it,
+  and whether or not the server was running the whole time.
+- An invitation can be limited by lifetime and by number of uses. Once redeemed, it no
+  longer opens the room.
+
+## What it does not give you
+
+Read this before anyone relies on it.
+
+- **Deletion on the other side is not guaranteed.** The message disappears from the interface
+  and from the server, but a screenshot, a photograph of the screen or a modified client will
+  keep it. No messenger solves this.
+- **The server sees metadata**: who, when, in which room, how large the message is and how
+  long it lives. Not the content, but the fact of the conversation.
+- **A removed member keeps whatever they already read** and can decrypt the history of earlier
+  key epochs. That is exactly why the maximum message lifetime is five days.
+- **Virus scanning of attachments is impossible in principle** — the server only ever sees
+  ciphertext.
+- The operator of the server can substitute the code served to the browser. When you host it
+  yourself this means "you can attack yourself", but if the server belongs to someone else,
+  trusting them is a requirement, not an option.
+
+---
+
+## Quick start
+
+You need Java 21 and a reverse proxy that terminates TLS. Caddy is the simplest.
+
+```bash
+./gradlew bootJar          # build/libs/messenger.jar
+java -jar build/libs/messenger.jar --app.data-dir=./data
+```
+
+For a one-off trial run on a host, without installing a service or enabling autostart, see
+[deploy/TESTRUN.md](deploy/TESTRUN.md). It goes over an SSH tunnel, which is not caution for
+its own sake: over plain HTTP a browser does not expose `crypto.subtle`, and invitations and
+one-time notes stop working.
+
+### Installing as a service
 
 ```bash
 sudo useradd -r -s /usr/sbin/nologin messenger
@@ -44,406 +68,175 @@ sudo cp messenger.jar /opt/messenger/
 sudo chown -R messenger:messenger /var/lib/messenger
 ```
 
-Готовые файлы лежат в каталоге `deploy/` — их не нужно набирать заново:
+Ready-made files live in `deploy/`, so there is nothing to retype:
 
 ```bash
 sudo cp deploy/messenger.service /etc/systemd/system/
-sudo cp deploy/Caddyfile /etc/caddy/Caddyfile   # поправьте домен
+sudo cp deploy/Caddyfile /etc/caddy/Caddyfile   # change the domain
 sudo cp deploy/backup.sh /usr/local/bin/messenger-backup
 ```
 
-В `Caddyfile` журнал доступа настроен так, чтобы не стать историей соединений: query-строка
-вырезается целиком, адрес обрезается до подсети. Секретов в query нет по устройству системы —
-они живут во фрагменте URL и до сервера не доходят, — но вызов входа, ключ устройства и
-подпись там есть, и складывать их на диск незачем.
-
-Запуск:
+The access log in the supplied `Caddyfile` is configured so that it does not become a
+connection history: the query string is stripped entirely and the address is truncated to
+its subnet. By the design of the system there are no secrets in the query string — those
+live in the URL fragment and never reach the server — but the login challenge, the device
+key and the signature do appear there, and there is no reason to put them on disk.
 
 ```bash
 sudo systemctl enable --now messenger
 sudo journalctl -u messenger -f
 ```
 
-### Первый запуск
+### First start
 
-При старте с пустым каталогом сервер создаёт базу, генерирует свою ключевую пару и печатает
-в журнал ссылку-приглашение владельца:
+Starting with an empty data directory, the server creates the database, generates its own
+key pair and prints an owner invitation link to the log:
 
 ```
 Владелец ещё не назначен. Ссылка действительна 24 часа:
 https://chat.example.org/join#hT9x...QaZ.k4Vb...9Lm
 ```
 
-Откройте её в браузере — станете владельцем. **Ссылка печатается один раз**, при следующих
-запусках её не будет: владелец уже есть. Если потеряли её до перехода — остановите сервер,
-удалите базу и начните заново, других данных пока нет.
+Open it in a browser and you become the owner. **The link is printed once**; on later starts
+it is not printed at all, because an owner already exists. If you lose it before opening it,
+stop the server, delete the database and start over — there is no other data yet.
 
-Скопируйте ссылку целиком, включая часть после `#`. В ней ключ, и без него ссылка бесполезна.
+Copy the link in full, including the part after `#`. The key is in there, and without it the
+link is useless.
 
 ---
 
-## Настройки
+## Configuration
 
-Флагом командной строки или в `application.yml`:
+By command-line flag or in `application.yml`:
 
-| Параметр | По умолчанию | Что делает |
+| Setting | Default | What it does |
 |---|---|---|
-| `app.data-dir` | `./data` | Каталог данных: база, блобы, ключ сервера |
-| `server.port` | `8080` | Порт |
-| `app.file.max-bytes` | `22020096` | Потолок размера файла (шифротекст) |
-| `app.file.room-quota-bytes` | `2147483648` | Квота на комнату |
-| `app.file.disk-quota-bytes` | `21474836480` | Квота на весь сервер |
-| `server.undertow.max-http-post-size` | `22085632` | Потолок тела запроса у контейнера |
-| `server.forward-headers-strategy` | не задан | **Обязательно `framework`, если впереди прокси с TLS** |
-| `app.invite-ttl-hours` | `24` | Срок жизни приглашения по умолчанию |
-| `app.work.bits` | `18` | Сложность пропуска на комнату и приглашение; `0` выключает |
-| `app.limit.create-per-hour` | `5` | Комнат в час с одного устройства |
-| `app.limit.create-per-hour-ip` | `20` | Комнат в час с одного адреса |
-| `app.limit.invite-per-hour` | `20` | Приглашений в час с одного устройства |
-| `app.limit.write-per-minute` | `60` | Записей в минуту: лента, личные, записки, вложения |
+| `app.data-dir` | `./data` | Data directory: database, blobs, server key |
+| `server.port` | `8080` | Port |
+| `app.file.max-bytes` | `22020096` | Ceiling on file size (ciphertext) |
+| `app.file.room-quota-bytes` | `2147483648` | Quota per room |
+| `app.file.disk-quota-bytes` | `21474836480` | Quota for the whole server |
+| `server.undertow.max-http-post-size` | `22085632` | Container's ceiling on the request body |
+| `server.forward-headers-strategy` | unset | **Must be `framework` behind a TLS proxy** |
+| `app.invite-ttl-hours` | `24` | Default invitation lifetime |
+| `app.work.bits` | `18` | Proof-of-work cost for rooms and invitations; `0` disables it |
+| `app.limit.create-per-hour` | `5` | Rooms per hour per device |
+| `app.limit.create-per-hour-ip` | `20` | Rooms per hour per address |
+| `app.limit.invite-per-hour` | `20` | Invitations per hour per device |
+| `app.limit.write-per-minute` | `60` | Writes per minute: feed, direct messages, notes, attachments |
 
-Счётчики попыток живут в памяти и на диск не пишутся: среди ключей есть IP-адреса, а
-хранить их — это ровно тот журнал соединений, которого здесь быть не должно. Перезапуск
-сервера счётчики обнуляет.
+Rate-limiter counters live in memory and are never written to disk: IP addresses are among
+the keys, and storing them would be precisely the connection log that has no business
+existing here. Restarting the server resets the counters.
 
-Пропуск на создание комнаты — не капча, а работа процессора: на 18 битах браузер тратит
-десятые доли секунды, а тому, кто заводит комнаты тысячами, это стоит в тысячу раз дороже.
-Капча потребовала бы стороннего сервиса, то есть постороннего наблюдателя за каждым входом.
-На закрытом сервере, где комнаты заводят несколько знакомых людей, проверку можно выключить
-целиком: `app.work.bits=0`.
+The proof of work on creating a room is not a CAPTCHA but processor time: at 18 bits a
+browser spends a fraction of a second, while someone creating rooms by the thousand pays a
+thousand times that. A CAPTCHA would require a third-party service, which means an outside
+observer at every login. On a closed server, where a handful of people who know each other
+create the rooms, the check can be turned off entirely with `app.work.bits=0`.
 
-### За обратным прокси обязательна одна настройка
+### One setting is mandatory behind a reverse proxy
 
 ```
 --server.forward-headers-strategy=framework
 ```
 
-Без неё приложение видит схему `http` (прокси уже снял TLS), а браузер шлёт
-`Origin: https://…`. Spring считает это разными источниками и **отклоняет апгрейд
-WebSocket с кодом 403**. Страница при этом открывается и выглядит рабочей, а лента
-молча не оживает — снаружи это похоже на что угодно, кроме настоящей причины.
-Ищите `403` на `/ws` в журнале прокси.
+Without it the application sees the scheme as `http`, because the proxy has already
+terminated TLS, while the browser sends `Origin: https://…`. Spring treats these as different
+origins and **rejects the WebSocket upgrade with 403**. The page still opens and looks like it
+works; the feed simply never comes alive, which from the outside resembles anything except the
+actual cause. Look for `403` on `/ws` in the proxy log.
 
-По умолчанию настройка не включена намеренно: она заставляет доверять заголовкам
-`X-Forwarded-*`, а это допустимо только когда впереди действительно свой прокси.
-Приложение, выставленное в интернет напрямую, с ней поверит подделанному заголовку.
+It is deliberately off by default: it makes the application trust `X-Forwarded-*` headers,
+which is only acceptable when there really is a proxy of yours in front. An application
+exposed directly to the internet would believe a forged header.
 
-`server.undertow.max-http-post-size` должен оставаться выше `app.file.max-bytes`, и менять
-эти два числа нужно только вместе. Если контейнерный потолок окажется ниже, вложения
-перестанут доходить: Undertow обрывает соединение раньше, чем приложение успеет ответить
-внятным отказом.
+`server.undertow.max-http-post-size` must stay above `app.file.max-bytes`, and the two numbers
+should only ever be changed together. If the container's ceiling ends up lower, attachments
+stop arriving: Undertow drops the connection before the application can answer with a clear
+refusal.
 
-Сроки жизни сообщений задаются в самой комнате, не в конфиге: по умолчанию 48 часов,
-потолок 5 суток.
+Message lifetimes are chosen in the room itself rather than in configuration: 48 hours by
+default, five days maximum.
 
-### Что лежит в каталоге данных
+### What lives in the data directory
 
 ```
 /var/lib/messenger/
-├── messenger.db        база: комнаты, участники, приглашения, шифротексты сообщений
-├── messenger.db-wal    журнал упреждающей записи
-├── server.key          ключевая пара сервера, права 600
-└── blobs/              зашифрованные файлы, по одному на вложение
+├── messenger.db        rooms, members, invitations, message ciphertexts
+├── messenger.db-wal    write-ahead log
+├── server.key          the server's key pair, mode 600
+└── blobs/              encrypted files, one per attachment
 ```
 
-Сервер откажется стартовать, если у `server.key` слишком открытые права. Это не придирка:
-подмена этого ключа позволяет выдавать себя за сервер при входе.
+The server refuses to start if the permissions on `server.key` are too open. That is not
+pedantry: substituting this key allows impersonating the server during login.
 
----
+### Containers
 
-## Контейнеры
-
-Способ для тех, у кого уже есть окружение с контейнерами. Основной путь — systemd выше.
+For people who already run containers. The main path is systemd, above.
 
 ```bash
 docker compose up -d --build
 ```
 
-`docker-compose.yml` поднимает приложение и Caddy перед ним. Данные лежат в именованном томе
-`messenger-data`, наружу приложение не публикуется — TLS завершает Caddy.
+`docker-compose.yml` brings up the application with Caddy in front of it. Data lives in the
+named volume `messenger-data`, and the application is not published outside — Caddy terminates
+TLS.
 
-**Контейнер прячет каталог данных за томом, и про резервные копии легко забыть.** Копировать
-нужно именно его: там ключ сервера, база и вложения. Внутри контейнера это тот же
-`/var/lib/messenger`, и `deploy/backup.sh` работает и там.
-
----
-
-## Учётная запись и ключи
-
-Аккаунта в привычном смысле нет. Личность — это пара ключей, которая создаётся в браузере при
-первом входе и **никогда не покидает устройство**. Сервер знает только публичные части.
-
-При входе в комнату вы получаете карту из колоды — «дама треф», «семёрка пик». Карта выводится
-из вашего ключа и номера комнаты, выбрать её нельзя. В одной комнате не бывает двух одинаковых
-карт, а выбывшая карта не возвращается в колоду: отсюда потолок в 52 участника за всё время
-жизни комнаты.
-
-Карта — подсказка для памяти, не удостоверение. Настоящая проверка — отпечаток и кодовая фраза
-из четырёх слов: нажмите на карту собеседника и сверьте слова по другому каналу, голосом или
-при встрече.
-
-### Где хранится ключ
-
-В IndexedDB браузера, привязанно к домену сервера. Отсюда следствия:
-
-- Очистка данных сайта стирает ключ. Восстановить его сервер не может — у него никогда его
-  не было.
-- В режиме приватного просмотра ключ исчезнет при закрытии окна.
-- **В Safari на iOS данные сайта чистятся автоматически примерно через неделю без
-  посещения.** Добавьте страницу на домашний экран — для установленных таким образом сайтов
-  это ограничение не действует. Приложение попросит об этом при первом входе, не пропускайте.
-
-### Экспорт ключа
-
-Сделайте это сразу после первого входа. Без экспорта потеря браузера означает потерю доступа
-ко всем комнатам, и войти заново можно будет только по новому приглашению — уже другой картой,
-без прежней истории.
-
-Меню — «Ваша карта» — «Экспорт ключа». Три способа, они равнозначны:
-
-**1. Двадцать четыре слова.** Ключ показывается словами из списка BIP-39. Запишите их на
-бумаге по порядку. Слова показываются по явному нажатию и прячутся сами через пятнадцать
-секунд — не оставляйте их на экране в общественном месте и не фотографируйте: снимок попадёт
-в облако.
-
-**2. Файл.** Скачивается `key.enc`, зашифрованный вашей парольной фразой (Argon2id). Годится
-для менеджера паролей или флешки. Файл без фразы бесполезен, фраза без файла — тоже.
-
-**3. QR-код** — только для переноса на другое устройство, см. ниже.
-
-Все три способа кодируют одно и то же: 32 байта начального значения. Из него детерминированно
-выводятся обе пары ключей — для подписи и для шифрования, — поэтому восстановление даёт ровно
-ту же личность, ту же карту и доступ к прежней истории.
-
-### Перенос на другое устройство
-
-На старом устройстве: «Ваша карта» — «Перенести на устройство». Появится QR-код и шестизначное
-число под ним.
-
-На новом: откройте адрес сервера, «У меня уже есть ключ» — «Сканировать код». После сканирования
-введите шестизначное число со старого экрана.
-
-Число — не формальность. QR содержит зашифрованный ключ, и код от него передаётся отдельно,
-голосом. Иначе достаточно было бы сфотографировать ваш экран через плечо. QR живёт две минуты
-и потом гаснет.
-
-После переноса **обе копии работают одновременно** и равноправны — это одна и та же личность,
-одна карта, две сессии. Отозвать одну из них нельзя: отозвать можно только участие в комнате.
-
-### Восстановление
-
-«У меня уже есть ключ» — введите двадцать четыре слова или загрузите файл с парольной фразой.
-
-Вы окажетесь в тех же комнатах с той же картой. История подтянется — но только те сообщения,
-чей срок ещё не истёк. Всё остальное удалено с сервера и не восстанавливается ничем.
-
-### Если ключ утерян
-
-Восстановить нечего. Сервер не хранит ни ключей, ни способа их вывести — это не ограничение
-реализации, а условие того, что переписку нельзя прочитать со стороны сервера.
-
-Попросите новое приглашение. Вы войдёте новым участником, получите другую карту и займёте
-ещё одно место в колоде. Прежняя карта останется занятой навсегда.
-
-### Если ключ скомпрометирован
-
-Тот, у кого есть ваши слова, — это вы, с точки зрения системы. Немедленно попросите владельца
-комнаты исключить вашу карту: это меняет ключ комнаты, и новые сообщения станут для него
-нечитаемыми. Уже прочитанное и история прежних эпох останутся у него.
+**A container hides the data directory behind a volume, and backups are easy to forget.** That
+volume is exactly what needs copying: the server key, the database and the attachments are in
+it. Inside the container it is the same `/var/lib/messenger`, and `deploy/backup.sh` works
+there too.
 
 ---
 
-## Комнаты
+## How it works
 
-Создать комнату может любой участник. Создатель становится владельцем.
+Spring Boot, a single process. WebSocket for messages, ordinary HTTP for files, SQLite for
+data, the filesystem for attachments. The client is static content inside the same jar.
 
-**Приглашения.** «Пригласить» — задайте срок и число использований. Получится ссылка с
-секретом после `#`. Эта часть не уходит на сервер, поэтому её нет ни в журналах, ни в истории
-запросов.
+**Login.** The server issues a one-time challenge, the browser signs it with the device key,
+and the signature is verified when the connection is established. There is no password.
 
-Передавайте ссылку целиком и по каналу, которому доверяете: до момента погашения она открывает
-комнату любому, кто её открыл. После погашения ссылка становится бесполезной, даже если кто-то
-сохранил её копию.
+**Identity.** A device has two key pairs: Ed25519 for signing and X25519 for encryption. Both
+are derived deterministically from a 32-byte seed generated in the browser on first use and
+stored in IndexedDB. The seed can be exported as 24 BIP-39 words, as a passphrase-encrypted
+`key.enc` file, or transferred to another device by QR code.
 
-**Роли.** Владелец и администраторы выпускают приглашения и исключают участников. В переписке
-роли не видны — они нужны только в момент действия.
+**Rooms.** A room has a symmetric key (XChaCha20-Poly1305) encrypted separately for each
+member's X25519 key. Changing the membership starts a new key epoch. Removing a member rotates
+the epoch, so they stop receiving new messages immediately; what they already read stays with
+them, which is why the lifetime ceiling is low.
 
-**Исключение участника** меняет ключ комнаты. Исключённый перестаёт получать новые сообщения
-сразу, его открытые сессии разрываются. Прочитанное ранее остаётся у него.
+**Invitations.** The token is generated in the browser and only its SHA-256 hash reaches the
+server. The link carries `#<token>.<ephemeral private key>` in the fragment — the room key
+itself is not in the link. It sits on the server wrapped under the ephemeral public key and is
+deleted when the invitation is redeemed. Putting the room key in the fragment directly would
+turn every forwarded link into a permanent key to the room.
 
-**Конец колоды.** Когда роздана 52-я карта, комната больше не принимает участников. Это
-не ошибка и не лимит, который можно поднять: карты не переиспользуются, чтобы «дама треф»
-через неделю не оказалась другим человеком. Нужна новая комната — создайте новую.
+**Names.** A member gets a playing card rather than a chosen nickname, derived from
+`HMAC(room_id, public key)`. It cannot be picked, so it cannot be forged. Cards are never
+reused, which caps a room at 52 members over its whole lifetime. The card is a memory aid; the
+actual verification is the fingerprint and a four-word phrase compared over another channel.
 
----
+**Direct messages** live inside a room and are hidden from the server by fan-out: the text is
+encrypted once with a random key, and that key is placed into 52 envelopes, one per seat. The
+recipient's slot holds a real sealed box, the rest hold random bytes of the same length. Sealed
+box output is indistinguishable from random, so the server does not learn the recipient. The
+schema has no sender or recipient column; the signature is inside the ciphertext.
 
-## Сроки жизни сообщений
+**Crypto is libsodium in the browser**, vendored into the jar rather than loaded from a CDN.
+The server does not participate. Ed25519 verification on the server side is the JDK's own
+implementation; no third-party crypto library is pulled in.
 
-Срок выбирается при отправке: пять минут, час, сутки, двое суток, пять суток. По умолчанию
-48 часов, потолок — пять суток, и его нельзя обойти: сервер приводит присланное значение
-к допустимому диапазону.
-
-Сообщение начинает бледнеть за десять минут до конца, в последние минуты появляется счётчик.
-Верх ленты растворяется — это граница срока, а не незагруженная история: всё, что было
-раньше, удалено.
-
-Срок отсчитывается от отправки, а не от прочтения, и не зависит от того, работал ли сервер.
-Двухдневный простой не продлевает жизнь сообщений.
-
----
-
-## Личные сообщения
-
-Отдельная вкладка рядом с общей лентой. Написать можно любому участнику комнаты, выбрав его
-карту в списке. Тот, кто ни разу не открывал вкладку, ещё не опубликовал ключ переписки —
-ему написать нельзя, и в списке это сказано прямо.
-
-Сервер не знает, кому вы пишете. Каждое личное сообщение рассылается всей колоде: настоящий
-ключ уходит только получателю, остальные получают неотличимый от него мусор. Видно лишь, что
-кто-то написал лично кому-то.
-
-Сроки те же, что и в общей ленте: по умолчанию 48 часов, максимум пять суток.
-
-Личная переписка привязана к комнате. В другой комнате тот же человек — другая карта, и связать
-их между собой нельзя, в том числе и вам самим. Списка контактов нет намеренно.
-
-**Файлы в личных сообщениях не поддерживаются.** Вложение хранится на сервере одним объектом,
-и по тому, кто его скачивает, получатель определяется. Пока это не решено, файлы отправляются
-только в общую ленту.
-
-Администраторы личную переписку не видят и модерировать её не могут. Если для вашей комнаты
-это неприемлемо, отключите личные сообщения при её создании — потом настройка не меняется.
+The design decisions and the reasoning behind them are in [CLAUDE.md](CLAUDE.md); the work
+plan is in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md). Both are in Russian.
 
 ---
 
-## Файлы
-
-До 20 МБ на файл. Каждый файл шифруется собственным ключом, имя и тип хранятся внутри
-зашифрованного сообщения — сервер видит только размер и время.
-
-Файлу назначается тот же срок, что и сообщению, с которым он отправлен, поэтому исчезают
-они вместе. Сначала удаляется файл на диске, потом запись о нём в базе: обратный порядок
-оставил бы на диске мусор, о котором больше некому вспомнить.
-
-Ограничение в 20 МБ намеренное: оно позволяет расшифровывать файл целиком в браузере, без
-сложной потоковой обработки. Для больших файлов используйте что-то другое.
-
-Проверить вложение антивирусом сервер не может — он видит только шифротекст, и при сквозном
-шифровании иначе не бывает. В интерфейсе это написано у каждого файла, а не спрятано
-в справку.
-
----
-
-## Одноразовые ссылки
-
-Шторка с ключом — «Одноразовая записка». Содержимое откроется у первого, кто нажмёт кнопку,
-и будет уничтожено на сервере в тот же момент. Ключ от записки живёт во фрагменте ссылки
-и на сервер не попадает; ключ комнаты для этого не используется, иначе ссылка, отданная
-наружу, открывала бы всю переписку.
-
-Открытие требует явного нажатия на промежуточной странице. Это защита от превью-ботов и
-корпоративных антивирусов, которые иначе открыли бы ссылку раньше человека.
-
-Учтите: первым может оказаться не адресат. Одноразовость означает «ровно один раз», а не
-«ровно тому, кому предназначалось».
-
----
-
-## Резервные копии
-
-Копировать нужно весь каталог данных. База на живом сервере копируется только через `.backup`
-— обычный `cp` даст повреждённый файл.
-
-Готовый скрипт — `deploy/backup.sh`. По расписанию:
-
-```bash
-sudo cp deploy/backup.sh /usr/local/bin/messenger-backup
-echo '15 4 * * * /usr/local/bin/messenger-backup' | sudo crontab -
-```
-
-**Копия содержит `server.key` — храните её так же, как сам сервер.**
-
-Восстановление: остановить сервис, положить файлы обратно, запустить. Сообщения, чей срок
-истёк за время простоя, будут удалены при старте, до того как сервер начнёт отвечать. Это
-задумано: копия не воскрешает то, что должно было исчезнуть.
-
----
-
-## Обновление
-
-```bash
-sudo systemctl stop messenger
-sudo cp messenger-new.jar /opt/messenger/messenger.jar
-sudo systemctl start messenger
-```
-
-Миграции базы применяются при старте автоматически. Сделайте копию до обновления: откат
-миграций не поддерживается.
-
-Сверьте контрольную сумму скачанного файла с опубликованной для релиза. Именно этот jar
-раздаёт браузерам код, который шифрует переписку.
-
-```bash
-shasum -a 256 -c SHA256SUMS
-```
-
-Сборка воспроизводима: два прогона на одних исходниках дают побайтно одинаковый jar,
-поэтому сумму можно не принимать на веру, а получить самому из тех же исходников.
-
-### Отпечаток бандла
-
-Контрольная сумма jar говорит, что файл не подменили при скачивании. Отпечаток бандла
-отвечает на другой вопрос: тот ли код сервер раздаёт браузерам прямо сейчас. Он печатается
-при каждом старте:
-
-```bash
-journalctl -u messenger | grep 'Отпечаток бандла'
-```
-
-Сверьте его с опубликованным в релизных заметках. Считается он по всему, что уходит в
-браузер, — разметке, модулям и вендоренной крипте, — а не по jar целиком: в jar лежат ещё
-классы и зависимости, и его сумма меняется от вещей, к раздаваемому коду отношения не имеющих.
-
----
-
-## Диагностика
-
-**Не открывается, в журнале «отказ по правам на server.key».** `chmod 600 server.key` и
-`chown` на пользователя сервиса.
-
-**«Приглашение недействительно».** Ответ одинаков для истёкшего, исчерпанного и несуществующего
-приглашения — по ним нельзя определить, какое из них существовало. Попросите новое.
-
-**Ссылка не работает у получателя.** Скорее всего, при пересылке потерялась часть после `#`.
-Некоторые мессенджеры и почтовые клиенты её обрезают. Отправляйте ссылку как текст, не как
-предпросмотр.
-
-**Пропали все комнаты после чистки браузера.** Ключ стёрт. Восстановите из экспорта; без него
-восстановить нечего.
-
-**Файл не загружается.** Проверьте размер и квоту комнаты в журнале сервера. При исчерпании
-квоты сервер отвечает явным отказом, а не ошибкой.
-
-**База растёт.** Проверьте `blobs/` — файлы занимают больше, чем текст. Уборка идёт раз в
-полминуты, место возвращается порциями.
-
----
-
-## Как устроено
-
-Spring Boot, один процесс. WebSocket для сообщений, обычный HTTP для файлов, SQLite для
-данных, файловая система для вложений. Клиент — статика внутри того же jar.
-
-Вход: сервер выдаёт одноразовое число, браузер подписывает его ключом устройства, подпись
-проверяется при установке соединения. Пароля нет.
-
-Шифрование: у комнаты симметричный ключ, зашифрованный отдельно под каждого участника.
-Смена состава участников порождает новую эпоху ключа. Криптография — libsodium в браузере,
-сервер не участвует.
-
-Подробности решений и обоснования — в `CLAUDE.md`, план работ — в `IMPLEMENTATION_PLAN.md`.
-
-## Сборка
+## Building
 
 ```bash
 ./gradlew bootJar         # build/libs/messenger.jar
@@ -451,5 +244,74 @@ Spring Boot, один процесс. WebSocket для сообщений, об�
 ./gradlew releaseHashes   # build/libs/SHA256SUMS
 ```
 
-Java 21 фиксирована toolchain'ом: системный `JAVA_HOME` на сборку не влияет, и собранный
-у вас jar совпадёт с собранным у нас.
+Java 21 is pinned by the Gradle toolchain, so the system `JAVA_HOME` does not affect the build
+and the jar you build matches the one we build.
+
+**The build is reproducible**: two runs over the same sources produce a byte-identical jar.
+That means a published checksum can be reproduced rather than taken on trust.
+
+### Bundle fingerprint
+
+A checksum of the jar tells you the file was not tampered with in transit. The bundle
+fingerprint answers a different question: whether the code the server is handing to browsers
+right now is the code you think it is. It is printed on every start.
+
+```bash
+journalctl -u messenger | grep 'Отпечаток бандла'
+```
+
+It is computed over everything that goes to the browser — markup, modules and the vendored
+crypto — rather than over the whole jar, because a jar also contains classes and dependencies
+whose checksum changes for reasons unrelated to the served code.
+
+### Tests
+
+```bash
+./gradlew test
+./gradlew test --tests '*AcceptanceTest*'   # the security acceptance checklist
+```
+
+There are no JavaScript tests and no npm: libsodium is vendored without a bundler. The few
+things that cannot be checked from Java — QR transfer, file encryption in the browser, direct
+message envelopes — have assertion pages under `src/test/resources/browser/`, served at
+`/browser/` by `./gradlew bootRun`. **Pages that touch device identity wipe the key storage
+for their origin, so do not open them against a live deployment.**
+
+---
+
+## Security
+
+The system is designed so that the server is transport and storage for ciphertext and nothing
+else. The rules that follow from that are not negotiable and are documented in
+[CLAUDE.md](CLAUDE.md):
+
+1. Plaintext never leaves the browser.
+2. Secrets travel in the URL fragment, after `#`. The fragment does not reach the server, does
+   not appear in web server logs and is not sent in the `Referer` header. Any code that moves a
+   fragment secret into a query parameter or a path is a bug.
+3. The server stores only SHA-256 hashes of tokens, never the tokens themselves.
+4. Device private keys live in the browser's IndexedDB and are never transmitted.
+5. Full URLs, message contents and member public keys are never logged.
+
+**Reporting a vulnerability.** Use GitHub's private vulnerability reporting on the Security tab
+of this repository. Please do not open a public issue for anything that affects
+confidentiality. There is no bug bounty; this is a self-hosted project maintained by one
+person.
+
+**No audit has been performed.** If you are choosing a messenger for a situation where being
+wrong has serious consequences, prefer something that has been reviewed by people who do this
+professionally.
+
+---
+
+## License
+
+[GNU Affero General Public License v3.0](LICENSE).
+
+AGPL rather than a permissive license on purpose. Trust in a web messenger rests on the served
+code matching the published source — which is why the bundle fingerprint is printed at every
+start. A license that allowed running a modified, closed server for other people would make
+that check meaningless.
+
+Vendored third-party code keeps its own licenses, listed in
+[src/main/resources/static/vendor/PROVENANCE.md](src/main/resources/static/vendor/PROVENANCE.md).
