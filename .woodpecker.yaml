@@ -1,0 +1,15 @@
+# Woodpecker CI на Codeberg — зеркало того же, что делает GitHub Actions.
+#
+# Логика снова не здесь, а в ./verify.sh: тесты и две сборки с побайтовым
+# сравнением. Смысл именно в том, чтобы у двух сервисов и у человека за
+# ноутбуком выполнялся один и тот же скрипт, а не три похожих.
+when:
+  - event: [push, pull_request, manual]
+
+steps:
+  - name: verify
+    # JDK 21 нужен самому Gradle: версия компиляции пришпилена toolchain'ом,
+    # но без JDK в образе запускать нечего.
+    image: eclipse-temurin:21-jdk
+    commands:
+      - ./verify.sh
