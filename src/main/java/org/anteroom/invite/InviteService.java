@@ -2,6 +2,7 @@ package org.anteroom.invite;
 
 import java.time.Clock;
 
+import org.anteroom.Refusal;
 import org.anteroom.device.DeviceService;
 import org.anteroom.room.RoomService;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -37,8 +38,18 @@ public class InviteService {
         this.clock = clock;
     }
 
+    /**
+     * @throws Refusal когда в комнате не осталось мест: приглашение туда — обещание,
+     *         которое сервер не выполнит, и отказ должен достаться выпускающему, а не
+     *         приглашённому. Иначе владелец отправляет ссылку человеку, тот открывает её
+     *         и упирается в конец колоды, ничего не в силах сделать.
+     */
     public void create(String roomId, String issuer, String tokenHash, String role,
                        long ttlSeconds, int uses, byte[] wrappedKey) {
+        // Owner-инвайт первого запуска идёт без комнаты — проверять нечего.
+        if (roomId != null && rooms.find(roomId).deckSpent()) {
+            throw new Refusal(Refusal.DECK_SPENT);
+        }
         jdbc.update("""
                 INSERT INTO invite (token_hash, room_id, role, created_by, wrapped_key, expires_at, uses_left)
                 VALUES (?, ?, ?, ?, ?, ?, ?)

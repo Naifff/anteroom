@@ -27,6 +27,15 @@ public class ChallengeService {
     /** Значения по умолчанию. Настраиваются, потому что нагрузка у всех разная. */
     public static final int PER_IP_LIMIT = 30;
     public static final int MAX_LIVE = 10000;
+    /**
+     * Потолок на число адресов в окне.
+     *
+     * <p>Отдельный от {@link #MAX_LIVE}: тот считает выданные вызовы, а запись в карте
+     * адресов заводится и на отказанный запрос. Упёршийся в {@code MAX_LIVE} сервер
+     * не выдаёт ничего и при этом продолжал бы копить адреса — потолок на живые вызовы
+     * от этого не спасает вовсе.
+     */
+    public static final int MAX_ADDRESSES = 20000;
 
     private static final Base64.Encoder ENCODER = Base64.getUrlEncoder().withoutPadding();
     private static final Base64.Decoder DECODER = Base64.getUrlDecoder();
@@ -39,15 +48,18 @@ public class ChallengeService {
     private final Clock clock;
     private final int perIpLimit;
     private final int maxLive;
+    private final int maxAddresses;
     private volatile long windowStartedAt;
 
     public ChallengeService(ServerKeyStore serverKeys, Clock clock,
                             @Value("${app.challenge.per-ip-limit:" + PER_IP_LIMIT + "}") int perIpLimit,
-                            @Value("${app.challenge.max-live:" + MAX_LIVE + "}") int maxLive) {
+                            @Value("${app.challenge.max-live:" + MAX_LIVE + "}") int maxLive,
+                            @Value("${app.challenge.max-addresses:" + MAX_ADDRESSES + "}") int maxAddresses) {
         this.serverKeys = serverKeys;
         this.clock = clock;
         this.perIpLimit = perIpLimit;
         this.maxLive = maxLive;
+        this.maxAddresses = maxAddresses;
         this.windowStartedAt = clock.millis();
     }
 
@@ -57,7 +69,18 @@ public class ChallengeService {
         forgetExpired(now);
         rollWindow(now);
 
-        if (perIp.computeIfAbsent(clientIp, ip -> new AtomicInteger()).incrementAndGet() > perIpLimit) {
+        // Место под новый адрес проверяется до того, как он заведён. Отказ достаётся
+        // только незнакомым адресам: если гасить всех подряд, наплыв с чужих адресов
+        // выбивает тех, кто уже работает, и потолок памяти превращается в способ отказа
+        // в обслуживании. Гонка здесь безобидна — перебор на несколько записей.
+        AtomicInteger seen = perIp.get(clientIp);
+        if (seen == null) {
+            if (perIp.size() >= maxAddresses) {
+                return null;
+            }
+            seen = perIp.computeIfAbsent(clientIp, ip -> new AtomicInteger());
+        }
+        if (seen.incrementAndGet() > perIpLimit) {
             return null;
         }
         if (live.size() >= maxLive) {
@@ -103,6 +126,11 @@ public class ChallengeService {
     public int liveCount() {
         forgetExpired(clock.millis());
         return live.size();
+    }
+
+    /** Сколько адресов посчитано в текущем окне. */
+    public int addressCount() {
+        return perIp.size();
     }
 
     private void forgetExpired(long now) {
