@@ -1,6 +1,7 @@
 package org.anteroom.invite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -20,7 +21,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.IntStream;
 
+import org.anteroom.Refusal;
 import org.anteroom.device.DeviceService;
+import org.anteroom.room.CardDealer;
+import org.anteroom.room.DeckSpentException;
 import org.anteroom.room.RoomService;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -95,6 +99,48 @@ class InviteServiceTest {
     private String device(String name) {
         devices.rememberSigningKey(name);
         return name;
+    }
+
+    /** Добирает колоду до последнего места: хозяин занял одно при создании комнаты. */
+    private void fillTheDeck() {
+        for (int i = 0; i < CardDealer.DECK_SIZE - 1; i++) {
+            rooms.join(roomId, device("сосед-" + i), "member", "owner");
+        }
+    }
+
+    /**
+     * Приглашение в комнату без мест — обещание, которое сервер не выполнит. Отказ должен
+     * достаться тому, кто может что-то сделать, то есть выпускающему, а не приглашённому:
+     * иначе владелец отправляет ссылку человеку, а человек упирается в конец колоды.
+     */
+    @Test
+    void refusesToIssueAnInviteIntoARoomWithNoSeatsLeft() {
+        fillTheDeck();
+
+        assertThatThrownBy(() -> issue("в-полную-комнату", 1, 3600))
+                .isInstanceOf(Refusal.class)
+                .hasMessageContaining(Refusal.DECK_SPENT);
+
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM invite", Integer.class))
+                .as("несбыточное приглашение не должно попасть в базу")
+                .isZero();
+    }
+
+    /**
+     * Конец колоды не должен сжигать попытку: приглашение выписано до того, как места
+     * кончились, и после ухода участника оно обязано остаться рабочим.
+     */
+    @Test
+    void keepsTheUseWhenRedemptionHitsTheEndOfTheDeck() {
+        String token = issue("выписан-заранее", 3, 3600);
+        fillTheDeck();
+
+        assertThatThrownBy(() -> invites.redeem(token, device("опоздавший")))
+                .isInstanceOf(DeckSpentException.class);
+
+        assertThat(jdbc.queryForObject("SELECT uses_left FROM invite", Integer.class))
+                .as("откат транзакции обязан вернуть счётчик")
+                .isEqualTo(3);
     }
 
     @Test

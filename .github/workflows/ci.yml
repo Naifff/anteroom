@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The acceptance checklist is part of this. It is the half of the suite that
+      # catches mistakes which look like working software from the outside.
+      - run: ./gradlew test
+
+      - name: Publish test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/reports/tests/test
+          retention-days: 7
+
+  reproducible:
+    name: Reproducible build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # No Gradle cache here on purpose. A restored task output would make the two
+      # builds identical without proving anything — the comparison has to run against
+      # work that actually happened twice.
+      - name: Build twice and compare byte for byte
+        run: |
+          set -eu
+          ./gradlew --no-build-cache --no-configuration-cache clean bootJar
+          cp build/libs/messenger.jar first.jar
+          sha256sum first.jar
+
+          ./gradlew --no-build-cache --no-configuration-cache clean bootJar
+          sha256sum build/libs/messenger.jar
+
+          # cmp rather than comparing hashes: on failure it says where the files
+          # diverge, and a hash only says that they do.
+          cmp first.jar build/libs/messenger.jar
+
+      - name: Publish the checksum
+        run: ./gradlew releaseHashes && cat build/libs/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"

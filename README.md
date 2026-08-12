@@ -126,6 +126,9 @@ By command-line flag or in `application.yml`:
 | `app.limit.create-per-hour-ip` | `20` | Rooms per hour per address |
 | `app.limit.invite-per-hour` | `20` | Invitations per hour per device |
 | `app.limit.write-per-minute` | `60` | Writes per minute: feed, direct messages, notes, attachments |
+| `app.challenge.per-ip-limit` | `30` | Login challenges per address per minute |
+| `app.challenge.max-live` | `10000` | Ceiling on outstanding challenges |
+| `app.challenge.max-addresses` | `20000` | Ceiling on addresses counted in one window |
 
 Rate-limiter counters live in memory and are never written to disk: IP addresses are among
 the keys, and storing them would be precisely the connection log that has no business
@@ -258,6 +261,11 @@ and the jar you build matches the one we build.
 
 **The build is reproducible**: two runs over the same sources produce a byte-identical jar.
 That means a published checksum can be reproduced rather than taken on trust.
+
+This is not a claim you have to believe. CI builds the jar twice on a clean runner, with the
+Gradle cache switched off so no restored output can fake the match, and compares the two files
+byte for byte — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml). The resulting
+checksum is printed in the job summary.
 
 ### Bundle fingerprint
 

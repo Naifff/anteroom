@@ -33,7 +33,7 @@ class ChallengeServiceTest {
         clock = new MutableClock(Instant.parse("2026-08-05T12:00:00Z"));
         serverKeys = new ServerKeyStore(dataDir);
         challenges = new ChallengeService(serverKeys, clock,
-                ChallengeService.PER_IP_LIMIT, ChallengeService.MAX_LIVE);
+                ChallengeService.PER_IP_LIMIT, ChallengeService.MAX_LIVE, ChallengeService.MAX_ADDRESSES);
         device = Ed25519Keys.newKeyPair();
     }
 
@@ -186,6 +186,61 @@ class ChallengeServiceTest {
         challenges.issue("10.0.0.2");
 
         assertThat(challenges.liveCount()).isEqualTo(1);
+    }
+
+    /**
+     * Карта адресов чистится целиком раз в минуту, а внутри окна росла по записи на каждый
+     * новый адрес. Потолок на живые вызовы её не защищал: {@code computeIfAbsent} стоял
+     * до проверки {@code live}, поэтому упёршийся в потолок сервер продолжал заводить
+     * записи, не выдавая ни одного вызова.
+     */
+    @Test
+    void keepsTheAddressMapBoundedEvenWhenLiveIsAlreadyFull() {
+        ChallengeService tight = new ChallengeService(serverKeys, clock, 30, 1, 4);
+
+        assertThat(tight.issue("10.0.0.1")).as("первый вызов выдаётся").isNotNull();
+
+        for (int i = 0; i < 500; i++) {
+            assertThat(tight.issue("10.0.0." + (i + 2)))
+                    .as("живые вызовы кончились — выдавать нечего")
+                    .isNull();
+        }
+
+        assertThat(tight.addressCount())
+                .as("память под адреса ограничена, а не растёт на каждый отказ")
+                .isLessThanOrEqualTo(4);
+    }
+
+    /**
+     * Отказ достаётся новым адресам, а не всем подряд: иначе наплыв с чужих адресов
+     * выбивает из системы тех, кто уже работает, — то есть лимит памяти превращается
+     * в готовый способ отказа в обслуживании.
+     */
+    @Test
+    void refusesNewAddressesButKeepsServingTheOnesAlreadyCounted() {
+        ChallengeService tight = new ChallengeService(serverKeys, clock, 30, 10000, 2);
+
+        assertThat(tight.issue("10.0.0.1")).isNotNull();
+        assertThat(tight.issue("10.0.0.2")).isNotNull();
+        assertThat(tight.issue("10.0.0.3")).as("карта адресов полна").isNull();
+
+        assertThat(tight.issue("10.0.0.1"))
+                .as("уже посчитанный адрес продолжает получать вызовы")
+                .isNotNull();
+        assertThat(tight.addressCount()).isEqualTo(2);
+    }
+
+    /** После смены окна место освобождается само — отдельной уборки заводить не пришлось. */
+    @Test
+    void freesTheAddressMapWhenTheWindowRolls() {
+        ChallengeService tight = new ChallengeService(serverKeys, clock, 30, 10000, 2);
+        tight.issue("10.0.0.1");
+        tight.issue("10.0.0.2");
+        assertThat(tight.issue("10.0.0.3")).isNull();
+
+        clock.advance(ChallengeService.TTL.plusSeconds(1));
+
+        assertThat(tight.issue("10.0.0.3")).as("новое окно — новые адреса").isNotNull();
     }
 
     private static final class MutableClock extends Clock {
