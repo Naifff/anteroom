@@ -267,6 +267,13 @@ Gradle cache switched off so no restored output can fake the match, and compares
 byte for byte — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml). The resulting
 checksum is printed in the job summary.
 
+Nor do you have to believe the CI. [`verify.sh`](verify.sh) performs the same two checks on
+your own machine, needing nothing but a JDK 21 and this repository:
+
+```bash
+./verify.sh
+```
+
 ### Bundle fingerprint
 
 A checksum of the jar tells you the file was not tampered with in transit. The bundle
