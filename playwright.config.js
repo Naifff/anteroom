@@ -21,6 +21,9 @@ export default defineConfig({
     forbidOnly: !!process.env.CI,
     retries: process.env.CI ? 1 : 0,
     reporter: process.env.CI ? [['github'], ['html', { open: 'never' }]] : [['list']],
+    // Снимки для README ничего не проверяют — они рисуют, и в обычном прогоне только
+    // мешают. Запускаются отдельно: npx playwright test --grep @screenshot
+    grepInvert: process.env.SCREENSHOTS ? undefined : /@screenshot/,
 
     use: {
         baseURL: `http://localhost:${PORT}`,

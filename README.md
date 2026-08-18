@@ -46,6 +46,54 @@ Read this before anyone relies on it.
 
 ---
 
+## What it looks like
+
+| Room feed | Your key | Direct message |
+|---|---|---|
+| ![Room feed](docs/screenshots/feed.png) | ![Key sheet](docs/screenshots/sheet.png) | ![Direct message](docs/screenshots/direct.png) |
+
+Names are playing cards dealt from the member's own key, not nicknames. The invitation link
+in the middle shot is real but dead — the screenshots are produced by a throwaway local run,
+which is also why they never go stale:
+
+```bash
+SCREENSHOTS=1 npx playwright test --grep @screenshot
+```
+
+## What the server actually holds
+
+```mermaid
+sequenceDiagram
+    participant A as Sender's browser
+    participant S as Server
+    participant B as Recipient's browser
+    A->>A: build envelope, encrypt with the room key
+    A->>S: ciphertext + chosen lifetime
+    Note over S: stores bytes and a deadline.<br/>No key. No plaintext. Ever.
+    S->>B: the same bytes
+    B->>B: unwrap the room key from IndexedDB, decrypt
+```
+
+The room key never travels through the server in the clear. Each member has it wrapped under
+their own X25519 key, and an invitation carries something weaker still:
+
+```mermaid
+flowchart LR
+    I["Inviter's browser"] -->|"SHA-256 of the token,<br/>room key wrapped under<br/>an ephemeral public key"| S[("Server")]
+    I -->|"link fragment: token<br/>plus ephemeral private key"| G["Guest"]
+    G -->|"the token itself"| S
+    S -->|"the wrapped room key"| G
+    G -->|"re-wrapped under the guest's own key"| S
+```
+
+The fragment never reaches the server, so the token is absent from its logs and from
+`Referer`. The server stores only the hash. Once the invitation is spent, the wrapped key is
+deleted with it — a forwarded link stops being a key to the room, which is exactly what
+putting the room key in the fragment would have failed to achieve.
+
+
+---
+
 ## Quick start
 
 You need Java 21 and a reverse proxy that terminates TLS. Caddy is the simplest.
