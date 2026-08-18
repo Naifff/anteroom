@@ -288,6 +288,21 @@ It is computed over everything that goes to the browser — markup, modules and 
 crypto — rather than over the whole jar, because a jar also contains classes and dependencies
 whose checksum changes for reasons unrelated to the served code.
 
+### Browser tests
+
+```bash
+npm ci
+npx playwright test
+```
+
+Playwright covers what Java cannot reach: the camera path of the QR key transfer, the key
+exchange between two separate identities, and the language switch. The suite starts the
+application itself, on its own port and an empty data directory — the owner invitation is
+printed once, on a first run only.
+
+npm exists for these tests alone. Nothing from it ships: libsodium is still vendored without
+a bundler.
+
 ### Tests
 
 ```bash

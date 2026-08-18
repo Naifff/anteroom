@@ -8,3 +8,9 @@ data/
 # Разбор архитектуры: черновик под руками, не часть проекта. Решения и их обоснования
 # живут в CLAUDE.md и IMPLEMENTATION_PLAN.md — второй источник правды заводить незачем.
 ARCHITECTURE_REVIEW.md
+
+# Браузерные тесты. Сам Playwright — зависимость разработки, в раздаваемый бандл
+# не попадает; libsodium по-прежнему вендорится без сборщика.
+node_modules/
+test-results/
+playwright-report/

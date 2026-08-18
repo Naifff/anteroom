@@ -69,3 +69,40 @@ jobs:
 
       - name: Publish the checksum
         run: ./gradlew releaseHashes && cat build/libs/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+
+  browser:
+    name: Browser end-to-end
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: gradle/actions/wrapper-validation@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # Only Chromium. These tests cover camera, IndexedDB and libsodium paths that
+      # Java cannot reach; running the same scenarios on three engines would triple
+      # the time without covering anything new.
+      - run: npx playwright install --with-deps chromium
+
+      # The suite starts the application itself, on its own port and its own empty
+      # data directory: the owner invitation is printed once, on a first run only.
+      - run: npx playwright test
+
+      - name: Publish the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
