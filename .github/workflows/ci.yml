@@ -83,6 +83,8 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - uses: gradle/actions/setup-gradle@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -94,6 +96,11 @@ jobs:
       # Java cannot reach; running the same scenarios on three engines would triple
       # the time without covering anything new.
       - run: npx playwright install --with-deps chromium
+
+      # Compile before the tests, not inside them. Playwright starts the server with
+      # bootRun and gives it 180 seconds; a cold Spring Boot compile can eat that
+      # budget on its own and fail as a timeout rather than as a build error.
+      - run: ./gradlew classes
 
       # The suite starts the application itself, on its own port and its own empty
       # data directory: the owner invitation is printed once, on a first run only.
